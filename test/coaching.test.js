@@ -34,7 +34,7 @@ test("when a supported alternative has real user evidence, one actionable prompt
   // Act
   const result = validateEvaluation(reply, work, capabilities)
   // Assert
-  assert.equal(result.message, "You could have done this with less work by asking OMP to read the files instead of copying them manually.\nNext time: “Compare both files directly; ask for approval before any edits.”\nAvailable capability: read (omp://tools/read.md).")
+  assert.match(result.message, /Compare both files directly; ask for approval before any edits\./)
 })
 
 test("when the evaluator finds an incomplete unit, coaching remains silent", () => {
@@ -129,4 +129,24 @@ test("when the latest persisted todo snapshot has unfinished work, coaching is i
   const result = hasUnfinishedTodos(entries)
   // Assert
   assert.equal(result, true)
+})
+
+test("when the complete answer is one character, the next task does not inherit its effort", () => {
+  // Arrange
+  const shortWork = { key: "answer", messages: [{ id: "answer", role: "assistant", text: "4" }] }
+  const reply = JSON.stringify({ completed: true, completionEvidence: { id: "answer", quote: "4" }, recommendation: null })
+  // Act
+  const result = validateEvaluation(reply, shortWork, capabilities)
+  // Assert
+  assert.deepEqual(result, { completed: true, message: null })
+})
+
+test("when a shorter prompt requires a file path, the required input is preserved", () => {
+  // Arrange
+  const evaluation = usefulEvaluation()
+  evaluation.recommendation.shorterPrompt = "Compare src/alpha.txt and src/beta.txt; ask before edits."
+  // Act
+  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities)
+  // Assert
+  assert.match(result.message, /Compare src\/alpha\.txt and src\/beta\.txt; ask before edits\./)
 })

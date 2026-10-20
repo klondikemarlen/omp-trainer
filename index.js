@@ -71,7 +71,7 @@ export default function trainer(pi) {
       if (ctx.sessionManager.getSessionId() !== sessionId) return
       if (captureWork(ctx.sessionManager.getBranch())?.key !== work.key) return
 
-      const result = validateEvaluation(replyText, work, capabilities)
+      const result = validateEvaluation(replyText, work, availableCapabilities(pi))
       // Metadata only: not model context. Persist before presentation for replay safety.
       pi.appendEntry(EVALUATION_TYPE, { key: work.key, completed: result.completed, shown: Boolean(result.message) })
       lastStatus = result.message ? "Coaching shown" : "No supported coaching opportunity"
