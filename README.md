@@ -46,7 +46,7 @@ Only control flags and evaluation markers are appended as namespaced session met
 ```sh
 npm test
 git diff --check
-omp --extension ./index.js
+omp --no-extensions --extension ./index.js
 ```
 
 The Node test suite covers evidence validation, incomplete/no-op outcomes, active-work suppression, replay, disabled-state restoration, and late-result cancellation. Model judgments additionally require native QA: exercise a useful alternative, an incomplete step, a task with no useful alternative, resume/replay, and an agent workflow-selection failure in a fresh OMP process.
