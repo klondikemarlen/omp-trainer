@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+### Fixed
+- Keep unrelated session history out of Trainer's bounded assessment request, preventing large prior output from silently exhausting its context budget.
+- Preserve primary conversation history and unrelated side requests while retaining existing model routing, completion checks, cancellation, and replay protection.
+
 ## 0.1.0
 
 ### Added
