@@ -58,7 +58,7 @@ function usefulReply() {
   }) }
 }
 
-test("when unrelated history exceeds the request budget, completed work still produces coaching", async () => {
+test("when unrelated history exceeds the request budget, completed work still records a coaching assessment", async () => {
   // Arrange
   const host = runtime(async () => usefulReply())
   host.ctx.runEphemeralTurn = async options => {
@@ -77,7 +77,8 @@ test("when unrelated history exceeds the request budget, completed work still pr
   // Act
   await host.settle()
   // Assert
-  assert.equal(host.notifications.at(-1), "You could have done this with less work by reading both files directly instead of copying their contents.\nNext time: “Compare both known files directly. No edits without approval.”\nAvailable capability: read (omp://tools/read.md).")
+  const assessment = host.entries.findLast(entry => entry.customType === EVALUATION_TYPE)
+  assert.deepEqual(assessment?.data, { key: "final", completed: true, shown: true })
 })
 
 test("when completed work is replayed after state reconstruction, the original coaching appears only once", async () => {
