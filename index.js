@@ -1,4 +1,4 @@
-import { availableCapabilities, captureWork, EVALUATION_TYPE, hasUnfinishedTodos, STATE_TYPE } from "./lib/evidence.js"
+import { availableCapabilities, captureWork, EVALUATION_TYPE, hasUnfinishedTodos, STATE_TYPE, textContent } from "./lib/evidence.js"
 import { evaluationPrompt, validateEvaluation } from "./lib/coaching.js"
 
 export default function trainer(pi) {
@@ -11,7 +11,7 @@ export default function trainer(pi) {
 
   function cancel() {
     generation++
-    pending?.abort()
+    pending?.controller.abort()
     pending = undefined
     stopObserved = false
   }
@@ -56,12 +56,13 @@ export default function trainer(pi) {
     }
     const sessionId = ctx.sessionManager.getSessionId()
     const controller = new AbortController()
-    pending = controller
+    const request = { controller, promptText: evaluationPrompt(work, capabilities) }
+    pending = request
     lastStatus = "Evaluating completed-work candidate"
     const deadline = ctx.setTimeout(() => controller.abort(), 45_000)
     try {
       const { replyText } = await ctx.runEphemeralTurn({
-        promptText: evaluationPrompt(work, capabilities),
+        promptText: request.promptText,
         tools: false,
         // Codex rejects output caps here; preserve the current route and bound time/context instead.
         maxContextBytes: 128_000,
@@ -80,7 +81,7 @@ export default function trainer(pi) {
       if (generation === expectedGeneration) lastStatus = `Unavailable: ${String(error?.message ?? error).slice(0, 300)}`
     } finally {
       ctx.clearTimer(deadline)
-      if (pending === controller) pending = undefined
+      if (pending === request) pending = undefined
     }
   }
 
@@ -99,8 +100,18 @@ export default function trainer(pi) {
         pi.appendEntry(STATE_TYPE, { enabled })
         lastStatus = enabled ? "Waiting for completed work" : "Disabled"
       }
-      ctx.ui.notify(`Trainer 0.1.0: ${enabled ? "on" : "off"}. ${lastStatus}. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
+      ctx.ui.notify(`Trainer 0.1.1: ${enabled ? "on" : "off"}. ${lastStatus}. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
     },
+  })
+
+  pi.on("context", event => {
+    if (!pending || pending.controller.signal.aborted) return
+
+    const prompt = event.messages.at(-1)
+    if (prompt?.role !== "user" || textContent(prompt.content) !== pending.promptText) return
+
+    // Only our exact side request: keep unrelated history out of its byte budget.
+    return { messages: [prompt] }
   })
 
   for (const event of ["session_start", "session_switch", "session_branch", "session_tree"]) pi.on(event, restore)

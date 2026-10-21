@@ -58,6 +58,29 @@ function usefulReply() {
   }) }
 }
 
+test("when unrelated history exceeds the request budget, completed work still records a coaching assessment", async () => {
+  // Arrange
+  const host = runtime(async () => usefulReply())
+  host.ctx.runEphemeralTurn = async options => {
+    const messages = [
+      { role: "custom", content: "Unrelated prior output: " + "x".repeat(160_000) },
+      { role: "user", content: [{ type: "text", text: options.promptText }] },
+    ]
+    const transformed = await host.emit("context", { messages })
+    const requestMessages = transformed?.messages ?? messages
+    if (Buffer.byteLength(JSON.stringify(requestMessages)) > options.maxContextBytes) {
+      throw new Error("Ephemeral turn context exceeds the configured limit")
+    }
+
+    return usefulReply()
+  }
+  // Act
+  await host.settle()
+  // Assert
+  const assessment = host.entries.findLast(entry => entry.customType === EVALUATION_TYPE)
+  assert.deepEqual(assessment?.data, { key: "final", completed: true, shown: true })
+})
+
 test("when completed work is replayed after state reconstruction, the original coaching appears only once", async () => {
   // Arrange
   const host = runtime(async () => usefulReply())
@@ -130,5 +153,5 @@ test("when existing disabled state is reconstructed, status reports the persiste
   await host.emit("session_start")
   await host.commands.get("trainer").handler("status", host.ctx)
   // Assert
-  assert.match(host.notifications.at(-1), /Trainer 0\.1\.0: off\./)
+  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
 })

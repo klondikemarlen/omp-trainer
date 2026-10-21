@@ -3,7 +3,7 @@ Post-completion coaching that helps OMP users achieve the same outcomes with les
 
 ## Install and Control
 
-Requires OMP with `runEphemeralTurn`, managed timers, and the main-session `session_stop` lifecycle (exercised with OMP 18.12.3).
+Requires OMP with `runEphemeralTurn`, context transforms, managed timers, and the main-session `session_stop` lifecycle (exercised with OMP 18.12.6).
 
 ```sh
 omp plugin install github:klondikemarlen/omp-trainer
@@ -37,9 +37,11 @@ Trainer never runs the recommendation, blocks completion, starts another primary
 
 Trainer reads only the active session branch after the last assessed completed unit: at most 32 user/assistant text messages and 24,000 UTF-8 bytes. Oversized or insufficient evidence is skipped rather than silently truncated. Agent-attributed synthetic user messages are excluded.
 
-The documented `runEphemeralTurn` API also includes the current conversation snapshot. The **whole serialized request** is limited to 128,000 bytes, including context; it is not an evidence-only provider request. Inference uses the session's configured provider, consumes its quota, disables tools, and is cancelled after 45 seconds or when new work/session changes intervene. Codex ephemeral turns reject output-token caps, so Trainer does not request one or switch models; the host's default reply bound and the cancellation deadline still apply. Unsupported hosts, failed inference, malformed decisions, or exceeded limits produce no suggestion; `/trainer status` exposes the latest diagnostic.
+The `runEphemeralTurn` API normally includes the current conversation snapshot. Trainer uses OMP's supported context transform to replace conversation messages with its assessment prompt, containing only the bounded evidence and available-capability catalog. This applies only to Trainer's exact in-flight request; primary turns and unrelated side requests keep their history. The **whole serialized request** remains limited to 128,000 bytes, including the inherited system prompt and any other extension transforms. Inference uses the session's configured provider, consumes its quota, disables tools, and is cancelled after 45 seconds or when new work/session changes intervene. Codex ephemeral turns reject output-token caps, so Trainer does not request one or switch models; the host's default reply bound and the cancellation deadline still apply. Unsupported hosts, failed inference, malformed decisions, or exceeded limits produce no suggestion; `/trainer status` exposes the latest diagnostic.
 
 Only control flags and evaluation markers are appended as namespaced session metadata, outside model-visible conversation. No private prompt archive or cross-session archive scan exists. Markers prevent replay/resume and advisor/report-only updates from reusing the same completed effort. The coaching itself is a UI notification, not a message to the primary or other advisors.
+
+If you have never seen coaching, run `/trainer status` in a new OMP process. `No supported coaching opportunity` means an assessment produced no suggestion; `Skipped` means the work was ineligible; `Unavailable` identifies a failed assessment. Silence alone does not establish that Trainer is working. Suggestions are deliberately uncommon: ordinary requests, necessary retries, and agent mistakes should not trigger prompting advice.
 
 ## Development and Release
 
