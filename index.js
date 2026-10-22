@@ -190,6 +190,7 @@ export default function trainer(pi) {
         await recall(ctx, request)
         return
       }
+
       if (action === "verbosity") {
         if (request && request !== "up" && request !== "down") {
           ctx.ui.notify("Usage: /trainer verbosity [up|down]", "info")

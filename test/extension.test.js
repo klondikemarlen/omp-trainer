@@ -441,7 +441,7 @@ test("when global settings are malformed, status reports the problem instead of 
   // Arrange
   const host = runtime(undefined)
   mkdirSync(join(host.agentDir, "trainer"))
-  writeFileSync(join(host.agentDir, "trainer", "config.json"), "{")
+  writeFileSync(join(host.agentDir, "trainer", "config.json"), JSON.stringify({ verbosity: "loud" }))
   // Act
   await host.commands.get("trainer").handler("status", host.ctx)
   // Assert
