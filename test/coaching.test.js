@@ -180,3 +180,15 @@ test("when a recall match would change intent, no invocation is taught", () => {
   // Assert
   assert.equal(result, null)
 })
+
+test("when recall selects an ordinary command, its invocation stays separate from request prose", () => {
+  // Arrange
+  const request = "Show current verification status without running checks."
+  const commands = [{ id: "command:verifier", kind: "command", name: "verifier", description: "Control verification", invocation: "/verifier" }]
+  const reply = JSON.stringify({ capabilityId: "command:verifier", reason: "Inspect verification status.", preservesIntent: true })
+  // Act
+  const result = validateRecall(reply, request, commands)
+  // Assert
+  assert.match(result, /^command: \/verifier\.\n[\s\S]*\nRequest: Show current verification status without running checks\.\n/)
+  assert.doesNotMatch(result, /\/verifier Show current verification status/)
+})
