@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+### Added
+- `/trainer verbosity`, `/trainer verbosity up`, and `/trainer verbosity down` inspect and control one persisted setting shared across projects and running terminals in the active OMP profile.
+- Private atomic settings writes and live reads at assessment, result, notification, and status boundaries, without polling or additional model requests.
+
+### Changed
+- Replace session-local verbosity commands and `OMP_TRAINER_MODE`; historical session mode metadata no longer overrides global verbosity.
+- Keep session on/off choices independent, and re-check global policy before presenting pending discovery so another terminal can turn it down.
+
 ## 0.5.0
 
 ### Added
