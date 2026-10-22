@@ -1,6 +1,6 @@
 {
   "name": "omp-trainer",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Evidence-backed post-completion coaching and on-demand installed-capability recall for OMP.",
   "type": "module",
   "repository": {
