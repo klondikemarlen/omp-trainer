@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+- `/trainer recall <request>` finds one relevant live tool, command, or skill without executing the request, including while automatic coaching is off.
+- Recall hints teach the exact registered invocation with the original request and its constraints preserved verbatim, without retaining hint history or recording a completed-work assessment.
+
+### Changed
+- Distinguish installed skills from ordinary commands in capability citations and retain the existing avoidable-effort threshold for automatic coaching.
+- Share context/time bounds, session isolation, and cancellation across automatic assessment and explicit recall.
+
 ## 0.3.0
 
 ### Added
