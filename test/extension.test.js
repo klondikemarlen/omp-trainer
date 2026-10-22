@@ -9,6 +9,8 @@ function runtime(evaluate) {
   const commands = new Map()
   const timers = new Set()
   const notifications = []
+  const widgets = new Map()
+  const hintPresentations = []
   const entries = [
     { type: "message", id: "human", message: { role: "user", content: "I manually copied both known files. No edits without approval." } },
     { type: "message", id: "final", message: { role: "assistant", stopReason: "stop", content: "The requested comparison is complete." } },
@@ -20,7 +22,18 @@ function runtime(evaluate) {
     hasPendingMessages: () => false,
     getAsyncJobSnapshot: () => ({ running: [], delivery: { queued: 0, delivering: false } }),
     sessionManager: { getBranch: () => entries, getEntries: () => entries, getSessionId: () => "session" },
-    ui: { notify: message => notifications.push(message) },
+    ui: {
+      notify: message => notifications.push(message),
+      setWidget: (key, content) => {
+        if (content === undefined) {
+          widgets.delete(key)
+          return
+        }
+
+        widgets.set(key, content)
+        if (key === "omp-trainer.hint") hintPresentations.push(content)
+      },
+    },
     setTimeout: (callback, delay) => { const timer = { callback, delay }; timers.add(timer); return timer },
     clearTimer: timer => timers.delete(timer),
     runEphemeralTurn: evaluate,
@@ -40,7 +53,7 @@ function runtime(evaluate) {
     const timer = [...timers].find(item => item.delay === 50)
     if (timer) { timers.delete(timer); await timer.callback() }
   }
-  return { ctx, entries, notifications, commands, emit, settle }
+  return { ctx, entries, notifications, widgets, hintPresentations, commands, emit, settle }
 }
 
 function usefulReply() {
@@ -89,7 +102,7 @@ test("when completed work is replayed after state reconstruction, the original c
   await host.emit("session_start")
   await host.settle()
   // Assert
-  assert.equal(host.notifications.filter(message => message.startsWith("You could")).length, 1)
+  assert.equal(host.hintPresentations.length, 1)
 })
 
 test("when an intermediate yield has no stop boundary, no coaching is shown", async () => {
@@ -98,7 +111,7 @@ test("when an intermediate yield has no stop boundary, no coaching is shown", as
   // Act
   await host.emit("agent_end")
   // Assert
-  assert.deepEqual(host.notifications, [])
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
 })
 
 test("when a background job still owns work, no coaching is shown", async () => {
@@ -108,7 +121,7 @@ test("when a background job still owns work, no coaching is shown", async () => 
   // Act
   await host.settle()
   // Assert
-  assert.deepEqual(host.notifications, [])
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
 })
 
 test("when coaching is disabled and the session resumes, no coaching is shown", async () => {
@@ -133,7 +146,7 @@ test("when a new task starts during evaluation, stale coaching is discarded", as
   finish(usefulReply())
   await settling
   // Assert
-  assert.deepEqual(host.notifications, [])
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
 })
 
 test("when inference fails, the completed primary work stays closed with no coaching", async () => {
@@ -142,7 +155,7 @@ test("when inference fails, the completed primary work stays closed with no coac
   // Act
   await host.settle()
   // Assert
-  assert.deepEqual(host.notifications, [])
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
 })
 
 test("when existing disabled state is reconstructed, status reports the persisted control", async () => {
@@ -154,4 +167,45 @@ test("when existing disabled state is reconstructed, status reports the persiste
   await host.commands.get("trainer").handler("status", host.ctx)
   // Assert
   assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
+})
+
+test("when the next task starts, the previous coaching hint disappears", async () => {
+  // Arrange
+  const host = runtime(async () => usefulReply())
+  await host.settle()
+  // Act
+  await host.emit("agent_start")
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when Trainer is disabled, its visible coaching hint disappears", async () => {
+  // Arrange
+  const host = runtime(async () => usefulReply())
+  await host.settle()
+  // Act
+  await host.commands.get("trainer").handler("off", host.ctx)
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when the user queries default status, the coaching hint remains visible", async () => {
+  // Arrange
+  const host = runtime(async () => usefulReply())
+  await host.settle()
+  // Act
+  await host.emit("input", { text: "/trainer" })
+  await host.commands.get("trainer").handler("", host.ctx)
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), true)
+})
+
+test("when the user switches sessions, the previous session's hint disappears", async () => {
+  // Arrange
+  const host = runtime(async () => usefulReply())
+  await host.settle()
+  // Act
+  await host.emit("session_switch")
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
 })
