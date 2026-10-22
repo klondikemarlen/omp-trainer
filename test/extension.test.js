@@ -189,13 +189,13 @@ test("when Trainer is disabled, its visible coaching hint disappears", async () 
   assert.equal(host.widgets.has("omp-trainer.hint"), false)
 })
 
-test("when the user queries status, the coaching hint remains visible", async () => {
+test("when the user queries default status, the coaching hint remains visible", async () => {
   // Arrange
   const host = runtime(async () => usefulReply())
   await host.settle()
   // Act
-  await host.emit("input", { text: "/trainer status" })
-  await host.commands.get("trainer").handler("status", host.ctx)
+  await host.emit("input", { text: "/trainer" })
+  await host.commands.get("trainer").handler("", host.ctx)
   // Assert
   assert.equal(host.widgets.has("omp-trainer.hint"), true)
 })

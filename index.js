@@ -106,7 +106,7 @@ export default function trainer(pi) {
         pi.appendEntry(STATE_TYPE, { enabled })
         lastStatus = enabled ? "Waiting for completed work" : "Disabled"
       }
-      ctx.ui.notify(`Trainer 0.1.1: ${enabled ? "on" : "off"}. ${lastStatus}. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
+      ctx.ui.notify(`Trainer 0.2.0: ${enabled ? "on" : "off"}. ${lastStatus}. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
     },
   })
 
@@ -123,7 +123,8 @@ export default function trainer(pi) {
   for (const event of ["session_start", "session_switch", "session_branch", "session_tree"]) pi.on(event, restore)
   pi.on("agent_start", (_event, ctx) => cancel(ctx))
   pi.on("input", (event, ctx) => {
-    if (event.text?.trim() !== "/trainer status") cancel(ctx)
+    const command = event.text?.trim()
+    if (command !== "/trainer" && command !== "/trainer status") cancel(ctx)
   })
   pi.on("session_shutdown", (_event, ctx) => cancel(ctx))
   // Observe this boundary synchronously; never return a stop decision or await coaching here.
