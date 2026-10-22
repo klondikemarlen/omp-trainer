@@ -61,8 +61,9 @@ function usefulReply() {
     completed: true,
     completionEvidence: { id: "final", quote: "The requested comparison is complete." },
     recommendation: {
+      kind: "alternative",
       capabilityId: "tool:read",
-      effortEvidence: [{ id: "human", quote: "I manually copied both known files." }],
+      userEvidence: [{ id: "human", quote: "I manually copied both known files." }],
       reason: "reading both files directly instead of copying their contents.",
       shorterPrompt: "Compare both known files directly. No edits without approval.",
       preservesInputsAndApprovals: true,
@@ -285,4 +286,88 @@ test("when new work starts during recall, its late result stays hidden", async (
   await recalling
   // Assert
   assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when verbose assessment has no supported tip, the user still sees that completed work was checked", async () => {
+  // Arrange
+  const reply = JSON.parse(usefulReply().replyText)
+  reply.recommendation = null
+  const host = runtime(async () => ({ replyText: JSON.stringify(reply) }))
+  await host.commands.get("trainer").handler("verbose", host.ctx)
+  // Act
+  await host.settle()
+  // Assert
+  assert.match(host.notifications.at(-1), /Assessed completed work: no supported coaching opportunity/)
+})
+
+test("when quiet assessment has no supported tip, it produces no automatic notification", async () => {
+  // Arrange
+  const reply = JSON.parse(usefulReply().replyText)
+  reply.recommendation = null
+  const host = runtime(async () => ({ replyText: JSON.stringify(reply) }))
+  await host.commands.get("trainer").handler("quiet", host.ctx)
+  const beforeAssessment = [...host.notifications]
+  // Act
+  await host.settle()
+  // Assert
+  assert.deepEqual(host.notifications, beforeAssessment)
+})
+
+test("when quiet mode resumes, status retains the saved coaching policy", async () => {
+  // Arrange
+  const host = runtime(async () => usefulReply())
+  await host.commands.get("trainer").handler("quiet", host.ctx)
+  // Act
+  await host.emit("session_start")
+  await host.commands.get("trainer").handler("status", host.ctx)
+  // Assert
+  assert.match(host.notifications.at(-1), /Mode: quiet\./)
+})
+
+test("when disabled Trainer changes verbosity, automatic coaching remains disabled", async () => {
+  // Arrange
+  const host = runtime(async () => usefulReply())
+  await host.commands.get("trainer").handler("off", host.ctx)
+  // Act
+  await host.commands.get("trainer").handler("quiet", host.ctx)
+  await host.commands.get("trainer").handler("verbose", host.ctx)
+  await host.emit("session_start")
+  await host.commands.get("trainer").handler("status", host.ctx)
+  // Assert
+  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
+})
+
+test("when verbosity changes during assessment, the cancelled result cannot display stale coaching", async () => {
+  // Arrange
+  let finish
+  const host = runtime(() => new Promise(resolve => { finish = resolve }))
+  const settling = host.settle()
+  await new Promise(resolve => setImmediate(resolve))
+  // Act
+  await host.commands.get("trainer").handler("quiet", host.ctx)
+  finish(usefulReply())
+  await settling
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when verbose assessment fails, the user sees the failure instead of unexplained silence", async () => {
+  // Arrange
+  const host = runtime(async () => { throw new Error("Provider unavailable") })
+  await host.commands.get("trainer").handler("verbose", host.ctx)
+  // Act
+  await host.settle()
+  // Assert
+  assert.match(host.notifications.at(-1), /Unavailable: Provider unavailable/)
+})
+
+test("when completed-work evidence exceeds the limit, verbose mode explains the skip", async () => {
+  // Arrange
+  const host = runtime(async () => usefulReply())
+  host.entries[0].message.content = "x".repeat(24_001)
+  await host.commands.get("trainer").handler("verbose", host.ctx)
+  // Act
+  await host.settle()
+  // Assert
+  assert.match(host.notifications.at(-1), /Skipped: no bounded completed-work candidate/)
 })

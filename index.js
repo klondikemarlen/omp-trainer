@@ -3,9 +3,16 @@ import { evaluationPrompt, recallPrompt, validateEvaluation, validateRecall } fr
 
 const HINT_WIDGET = "omp-trainer.hint"
 
+function defaultMode() {
+  if (process.env.OMP_TRAINER_MODE === "quiet") return "quiet"
+
+  return "verbose"
+}
+
 export default function trainer(pi) {
   pi.setLabel("Trainer")
   let enabled = process.env.OMP_TRAINER_ENABLED !== "0"
+  let mode = defaultMode()
   let lastStatus = "Waiting for completed work"
   let stopObserved = false
   let pending
@@ -13,6 +20,11 @@ export default function trainer(pi) {
 
   function showHint(ctx, message, label = "Trainer hint") {
     ctx.ui.setWidget(HINT_WIDGET, `${label}: ${message}`.split("\n"), { placement: "belowEditor" })
+  }
+
+  function reportOutcome(ctx, status) {
+    lastStatus = status
+    if (mode === "verbose") ctx.ui.notify(`Trainer: ${status}.`, "info")
   }
 
   function cancel(ctx) {
@@ -27,8 +39,12 @@ export default function trainer(pi) {
   function restore(_event, ctx) {
     cancel(ctx)
     enabled = process.env.OMP_TRAINER_ENABLED !== "0"
+    mode = defaultMode()
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.customType === STATE_TYPE && typeof entry.data?.enabled === "boolean") enabled = entry.data.enabled
+      if (entry.customType !== STATE_TYPE) continue
+
+      if (typeof entry.data?.enabled === "boolean") enabled = entry.data.enabled
+      if (entry.data?.mode === "verbose" || entry.data?.mode === "quiet") mode = entry.data.mode
     }
     lastStatus = "Waiting for completed work"
   }
@@ -79,38 +95,47 @@ export default function trainer(pi) {
   async function evaluate(ctx, expectedGeneration) {
     if (generation !== expectedGeneration || !canEvaluate(ctx)) return
     if (!ctx.runEphemeralTurn) {
-      lastStatus = "Unavailable: this OMP host has no runEphemeralTurn API"
+      reportOutcome(ctx, "Unavailable: this OMP host has no runEphemeralTurn API")
       return
     }
     const entries = ctx.sessionManager.getBranch()
     if (hasUnfinishedTodos(entries)) {
-      lastStatus = "Skipped: unfinished todos"
+      reportOutcome(ctx, "Skipped: unfinished todos")
       return
     }
     const work = captureWork(entries)
     if (!work) {
-      lastStatus = "Skipped: no bounded completed-work candidate"
+      reportOutcome(ctx, "Skipped: no bounded completed-work candidate")
       return
     }
     if (ctx.sessionManager.getEntries().some(entry => entry.customType === EVALUATION_TYPE && entry.data?.key === work.key)) return
     const capabilities = availableCapabilities(pi)
     if (!capabilities.length) {
-      lastStatus = "Skipped: no bounded available-capability catalog"
+      reportOutcome(ctx, "Skipped: no bounded available-capability catalog")
       return
     }
     lastStatus = "Evaluating completed-work candidate"
     try {
-      const replyText = await requestAssessment(ctx, evaluationPrompt(work, capabilities))
+      const replyText = await requestAssessment(ctx, evaluationPrompt(work, capabilities, mode))
       if (replyText === undefined || generation !== expectedGeneration || !canEvaluate(ctx)) return
       if (captureWork(ctx.sessionManager.getBranch())?.key !== work.key) return
 
-      const result = validateEvaluation(replyText, work, availableCapabilities(pi))
+      const result = validateEvaluation(replyText, work, availableCapabilities(pi), mode)
       // Metadata only: not model context. Persist before presentation for replay safety.
       pi.appendEntry(EVALUATION_TYPE, { key: work.key, completed: result.completed, shown: Boolean(result.message) })
-      lastStatus = result.message ? "Coaching shown" : "No supported coaching opportunity"
-      if (result.message) showHint(ctx, result.message)
+      if (!result.completed) {
+        reportOutcome(ctx, "Deferred: completion not confirmed")
+        return
+      }
+      if (!result.message) {
+        reportOutcome(ctx, "Assessed completed work: no supported coaching opportunity")
+        return
+      }
+
+      showHint(ctx, result.message)
+      reportOutcome(ctx, "Coaching shown below the input box")
     } catch (error) {
-      if (generation === expectedGeneration) lastStatus = `Unavailable: ${String(error?.message ?? error).slice(0, 300)}`
+      if (generation === expectedGeneration) reportOutcome(ctx, `Unavailable: ${String(error?.message ?? error).slice(0, 300)}`)
     }
   }
 
@@ -153,8 +178,8 @@ export default function trainer(pi) {
   }
 
   pi.registerCommand("trainer", {
-    description: "Post-completion coaching and opt-in capability recall: on, off, status, demo, recall",
-    getArgumentCompletions: prefix => ["on", "off", "status", "demo", "recall"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
+    description: "Post-completion coaching and capability recall: on, off, verbose, quiet, status, demo, recall",
+    getArgumentCompletions: prefix => ["on", "off", "verbose", "quiet", "status", "demo", "recall"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
     handler: async (args, ctx) => {
       const input = args.trim() || "status"
       const [action, request = ""] = input.split(/\s+(.*)/s)
@@ -169,17 +194,28 @@ export default function trainer(pi) {
         return
       }
 
-      if (input !== action || (action !== "status" && action !== "on" && action !== "off")) {
-        ctx.ui.notify("Usage: /trainer on|off|status|demo|recall <request>", "info")
+      if (input !== action || !["status", "on", "off", "verbose", "quiet"].includes(action)) {
+        ctx.ui.notify("Usage: /trainer on|off|verbose|quiet|status|demo|recall <request>", "info")
         return
       }
-      if (action === "on" || action === "off") {
+      if (action !== "status") {
         cancel(ctx)
-        enabled = action === "on"
-        pi.appendEntry(STATE_TYPE, { enabled })
-        lastStatus = enabled ? "Waiting for completed work" : "Disabled"
+        if (action === "on" || action === "off") {
+          enabled = action === "on"
+        } else {
+          mode = action
+        }
+        pi.appendEntry(STATE_TYPE, { enabled, mode })
+        if (enabled) {
+          lastStatus = "Waiting for completed work"
+        } else {
+          lastStatus = "Disabled"
+        }
       }
-      ctx.ui.notify(`Trainer 0.4.1: ${enabled ? "on" : "off"}. ${lastStatus}. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
+      let state = "off"
+      if (enabled) state = "on"
+
+      ctx.ui.notify(`Trainer 0.5.0: ${state}. ${lastStatus}. Mode: ${mode}. Use /trainer quiet for selective coaching or /trainer verbose for visible feedback. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
     },
   })
 
