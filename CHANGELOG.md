@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+### Fixed
+- Keep ordinary recalled command invocations separate from request prose instead of inventing undocumented arguments. Skill prompts still combine their registered invocation with the complete original request.
+
 ## 0.4.0
 
 ### Added

@@ -35,6 +35,8 @@ For example:
 
 If the installed `simplify` skill fits, the next-time prompt starts with `/skill:simplify` and retains the complete supplied request. The registry identifies skills separately from ordinary commands. Unavailable or intent-changing matches produce no recommendation; the four skills below are examples from MSSRT, not bundled Trainer dependencies.
 
+Only skills combine their invocation with your request as a next-time prompt. Ordinary commands display the registered invocation separately from a `Request:` line: the command catalog does not establish which subcommands or arguments they accept. Tool matches also keep the request as prose rather than inventing slash syntax.
+
 | Desired outcome | Skill invocation, only when registered |
 | --- | --- |
 | Move a project forward through one bounded delivered outcome | `/skill:advance` |
