@@ -209,3 +209,47 @@ test("when the user switches sessions, the previous session's hint disappears", 
   // Assert
   assert.equal(host.widgets.has("omp-trainer.hint"), false)
 })
+
+test("when the user requests a demo without an inference API, the hint is visibly marked as a preview", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  // Act
+  await host.commands.get("trainer").handler("demo", host.ctx)
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /^Trainer hint: Demo/)
+})
+
+test("when a demo is shown, no completed-work assessment is recorded", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  // Act
+  await host.commands.get("trainer").handler("demo", host.ctx)
+  // Assert
+  const evaluations = host.entries.filter(entry => entry.customType === EVALUATION_TYPE)
+  assert.deepEqual(evaluations, [])
+})
+
+test("when disabled coaching is previewed, automatic coaching stays disabled", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  await host.commands.get("trainer").handler("off", host.ctx)
+  // Act
+  await host.commands.get("trainer").handler("demo", host.ctx)
+  await host.commands.get("trainer").handler("status", host.ctx)
+  // Assert
+  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
+})
+
+test("when a pending assessment finishes after a demo, the real result cannot overwrite the preview", async () => {
+  // Arrange
+  let finish
+  const host = runtime(() => new Promise(resolve => { finish = resolve }))
+  const settling = host.settle()
+  await new Promise(resolve => setImmediate(resolve))
+  // Act
+  await host.commands.get("trainer").handler("demo", host.ctx)
+  finish(usefulReply())
+  await settling
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /^Trainer hint: Demo/)
+})

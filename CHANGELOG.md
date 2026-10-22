@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+- `/trainer demo` immediately displays an explicitly labelled preview through the same below-editor renderer as automatic coaching.
+- Demo autocomplete and cancellation of pending inference, without requesting a model, recording a false assessment, starting primary work, or changing the coaching on/off state.
+
 ## 0.2.0
 
 ### Changed
