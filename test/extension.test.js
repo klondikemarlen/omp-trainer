@@ -1,10 +1,22 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import test, { afterEach } from "node:test"
 
-import trainer from "../index.js"
 import { EVALUATION_TYPE, STATE_TYPE } from "../lib/evidence.js"
 
-function runtime(evaluate) {
+import trainer from "../index.js"
+
+const directories = new Set()
+
+afterEach(() => {
+  for (const directory of directories) rmSync(directory, { recursive: true, force: true })
+  directories.clear()
+})
+
+function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-test-"))) {
+  directories.add(agentDir)
   const handlers = new Map()
   const commands = new Map()
   const timers = new Set()
@@ -17,6 +29,7 @@ function runtime(evaluate) {
   ]
   const ctx = {
     agent: { kind: "main" },
+    agentDir,
     hasUI: true,
     isIdle: () => true,
     hasPendingMessages: () => false,
@@ -53,7 +66,7 @@ function runtime(evaluate) {
     const timer = [...timers].find(item => item.delay === 50)
     if (timer) { timers.delete(timer); await timer.callback() }
   }
-  return { ctx, entries, notifications, widgets, hintPresentations, commands, emit, settle }
+  return { ctx, agentDir, entries, notifications, widgets, hintPresentations, commands, emit, settle }
 }
 
 function usefulReply() {
@@ -293,7 +306,7 @@ test("when verbose assessment has no supported tip, the user still sees that com
   const reply = JSON.parse(usefulReply().replyText)
   reply.recommendation = null
   const host = runtime(async () => ({ replyText: JSON.stringify(reply) }))
-  await host.commands.get("trainer").handler("verbose", host.ctx)
+  await host.commands.get("trainer").handler("verbosity up", host.ctx)
   // Act
   await host.settle()
   // Assert
@@ -305,7 +318,7 @@ test("when quiet assessment has no supported tip, it produces no automatic notif
   const reply = JSON.parse(usefulReply().replyText)
   reply.recommendation = null
   const host = runtime(async () => ({ replyText: JSON.stringify(reply) }))
-  await host.commands.get("trainer").handler("quiet", host.ctx)
+  await host.commands.get("trainer").handler("verbosity down", host.ctx)
   const beforeAssessment = [...host.notifications]
   // Act
   await host.settle()
@@ -313,15 +326,19 @@ test("when quiet assessment has no supported tip, it produces no automatic notif
   assert.deepEqual(host.notifications, beforeAssessment)
 })
 
-test("when quiet mode resumes, status retains the saved coaching policy", async () => {
+test("when an old session resumes, historical verbosity cannot override the shared quiet setting", async () => {
   // Arrange
-  const host = runtime(async () => usefulReply())
-  await host.commands.get("trainer").handler("quiet", host.ctx)
+  const reply = JSON.parse(usefulReply().replyText)
+  reply.recommendation = null
+  const host = runtime(async () => ({ replyText: JSON.stringify(reply) }))
+  host.entries.unshift({ type: "custom", customType: STATE_TYPE, data: { enabled: true, mode: "verbose" } })
+  await host.commands.get("trainer").handler("verbosity down", host.ctx)
+  const beforeAssessment = [...host.notifications]
   // Act
   await host.emit("session_start")
-  await host.commands.get("trainer").handler("status", host.ctx)
+  await host.settle()
   // Assert
-  assert.match(host.notifications.at(-1), /Mode: quiet\./)
+  assert.deepEqual(host.notifications, beforeAssessment)
 })
 
 test("when disabled Trainer changes verbosity, automatic coaching remains disabled", async () => {
@@ -329,8 +346,8 @@ test("when disabled Trainer changes verbosity, automatic coaching remains disabl
   const host = runtime(async () => usefulReply())
   await host.commands.get("trainer").handler("off", host.ctx)
   // Act
-  await host.commands.get("trainer").handler("quiet", host.ctx)
-  await host.commands.get("trainer").handler("verbose", host.ctx)
+  await host.commands.get("trainer").handler("verbosity down", host.ctx)
+  await host.commands.get("trainer").handler("verbosity up", host.ctx)
   await host.emit("session_start")
   await host.commands.get("trainer").handler("status", host.ctx)
   // Assert
@@ -344,7 +361,7 @@ test("when verbosity changes during assessment, the cancelled result cannot disp
   const settling = host.settle()
   await new Promise(resolve => setImmediate(resolve))
   // Act
-  await host.commands.get("trainer").handler("quiet", host.ctx)
+  await host.commands.get("trainer").handler("verbosity down", host.ctx)
   finish(usefulReply())
   await settling
   // Assert
@@ -354,7 +371,7 @@ test("when verbosity changes during assessment, the cancelled result cannot disp
 test("when verbose assessment fails, the user sees the failure instead of unexplained silence", async () => {
   // Arrange
   const host = runtime(async () => { throw new Error("Provider unavailable") })
-  await host.commands.get("trainer").handler("verbose", host.ctx)
+  await host.commands.get("trainer").handler("verbosity up", host.ctx)
   // Act
   await host.settle()
   // Assert
@@ -365,9 +382,80 @@ test("when completed-work evidence exceeds the limit, verbose mode explains the 
   // Arrange
   const host = runtime(async () => usefulReply())
   host.entries[0].message.content = "x".repeat(24_001)
-  await host.commands.get("trainer").handler("verbose", host.ctx)
+  await host.commands.get("trainer").handler("verbosity up", host.ctx)
   // Act
   await host.settle()
   // Assert
   assert.match(host.notifications.at(-1), /Skipped: no bounded completed-work candidate/)
+})
+
+test("when another running session turns verbosity up, completed assessments become visible here", async () => {
+  // Arrange
+  const controller = runtime(undefined)
+  await controller.commands.get("trainer").handler("verbosity down", controller.ctx)
+  const reply = JSON.parse(usefulReply().replyText)
+  reply.recommendation = null
+  const observer = runtime(async () => ({ replyText: JSON.stringify(reply) }), controller.agentDir)
+  await observer.emit("session_start")
+  // Act
+  await controller.commands.get("trainer").handler("verbosity up", controller.ctx)
+  await observer.settle()
+  // Assert
+  assert.match(observer.notifications.at(-1), /Assessed completed work: no supported coaching opportunity/)
+})
+
+test("when another running session turns verbosity down, automatic assessment feedback stops here", async () => {
+  // Arrange
+  const controller = runtime(undefined)
+  await controller.commands.get("trainer").handler("verbosity up", controller.ctx)
+  const reply = JSON.parse(usefulReply().replyText)
+  reply.recommendation = null
+  const observer = runtime(async () => ({ replyText: JSON.stringify(reply) }), controller.agentDir)
+  await observer.emit("session_start")
+  // Act
+  await controller.commands.get("trainer").handler("verbosity down", controller.ctx)
+  await observer.settle()
+  // Assert
+  assert.deepEqual(observer.notifications, [])
+})
+
+test("when another terminal lowers verbosity during inference, a pending discovery tip is suppressed", async () => {
+  // Arrange
+  const controller = runtime(undefined)
+  await controller.commands.get("trainer").handler("verbosity up", controller.ctx)
+  let finish
+  const observer = runtime(() => new Promise(resolve => { finish = resolve }), controller.agentDir)
+  const reply = JSON.parse(usefulReply().replyText)
+  reply.recommendation.kind = "discovery"
+  const settling = observer.settle()
+  await new Promise(resolve => setImmediate(resolve))
+  // Act
+  await controller.commands.get("trainer").handler("verbosity down", controller.ctx)
+  finish({ replyText: JSON.stringify(reply) })
+  await settling
+  // Assert
+  assert.equal(observer.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when global settings are malformed, status reports the problem instead of silently choosing verbose", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  mkdirSync(join(host.agentDir, "trainer"))
+  writeFileSync(join(host.agentDir, "trainer", "config.json"), "{")
+  // Act
+  await host.commands.get("trainer").handler("status", host.ctx)
+  // Assert
+  assert.match(host.notifications.at(-1), /Global verbosity unavailable/)
+})
+
+test("when global verbosity cannot be written, the command reports failure instead of claiming it was saved", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  const invalidDirectory = join(host.agentDir, "not-a-directory")
+  writeFileSync(invalidDirectory, "Keep this file")
+  host.ctx.agentDir = invalidDirectory
+  // Act
+  await host.commands.get("trainer").handler("verbosity down", host.ctx)
+  // Assert
+  assert.match(host.notifications.at(-1), /global verbosity unavailable/)
 })
