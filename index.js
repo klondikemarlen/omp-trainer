@@ -127,6 +127,7 @@ export default function trainer(pi) {
         reportOutcome(ctx, "Deferred: completion not confirmed")
         return
       }
+
       if (!result.message) {
         reportOutcome(ctx, "Assessed completed work: no supported coaching opportunity")
         return
