@@ -253,3 +253,36 @@ test("when a pending assessment finishes after a demo, the real result cannot ov
   // Assert
   assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /^Trainer hint: Demo/)
 })
+
+test("when recall is requested while automatic coaching is off, the setting stays off", async () => {
+  // Arrange
+  const host = runtime(async () => ({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Read known files directly.", preservesIntent: true }) }))
+  await host.commands.get("trainer").handler("off", host.ctx)
+  // Act
+  await host.commands.get("trainer").handler("recall Read both known files without edits.", host.ctx)
+  await host.commands.get("trainer").handler("status", host.ctx)
+  // Assert
+  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\. Recall shown; nothing executed\./)
+})
+
+test("when recall has no matching capability, it does not mark the task as assessed", async () => {
+  // Arrange
+  const host = runtime(async () => ({ replyText: "null" }))
+  // Act
+  await host.commands.get("trainer").handler("recall Use the unavailable skill to publish a book.", host.ctx)
+  // Assert
+  assert.deepEqual(host.entries.filter(entry => entry.customType === EVALUATION_TYPE), [])
+})
+
+test("when new work starts during recall, its late result stays hidden", async () => {
+  // Arrange
+  let finish
+  const host = runtime(() => new Promise(resolve => { finish = resolve }))
+  const recalling = host.commands.get("trainer").handler("recall Read both known files.", host.ctx)
+  // Act
+  await host.emit("input", { text: "Start new work" })
+  finish({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Read files directly.", preservesIntent: true }) })
+  await recalling
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
