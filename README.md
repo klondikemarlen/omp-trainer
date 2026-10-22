@@ -1,5 +1,5 @@
 # omp-trainer
-Post-completion coaching that helps OMP users achieve the same outcomes with less prompting and effort.
+Post-completion coaching and on-demand capability recall that help OMP users achieve the same outcomes with less prompting and effort.
 
 ## Install and Control
 
@@ -13,14 +13,38 @@ Start a **new OMP process** after installation. Trainer is enabled by default.
 
 - `/trainer status` — show the loaded version, enabled state, and latest evaluation outcome.
 - `/trainer demo` — immediately show a clearly labelled preview through the real below-editor hint widget, without model inference.
+- `/trainer recall <request>` — find one relevant currently available tool, command, or skill without executing the request.
 - `/trainer off` — disable coaching and cancel pending inference.
 - `/trainer on` — enable coaching.
 - `OMP_TRAINER_ENABLED=0 omp` — default new sessions to disabled.
 - `omp plugin disable omp-trainer` — disable the installed plugin entirely.
 
-The on/off choice is saved in the current session and restored on resume. A saved session choice overrides the environment default. The command and its `on`, `off`, `status`, and `demo` arguments support native autocomplete.
+The on/off choice is saved in the current session and restored on resume. A saved session choice overrides the environment default. The command and its `on`, `off`, `status`, `demo`, and `recall` arguments support native autocomplete.
 
 Use `/trainer demo` when you want the hint to actually pop up without waiting for an automatic coaching opportunity. It is explicitly marked as a preview, not an assessment of your current work; it records no evaluation marker and starts no primary turn. It also works while automatic coaching is off without enabling it. The demo cancels pending automatic inference so a late result cannot overwrite it, and follows the same hint-clearing rules as normal coaching.
+
+## Find and Remember Capabilities
+
+Use `/trainer recall` with the request you would otherwise retrieve from clipboard history. Trainer asks the current configured model to match it to one live capability, then shows a labelled `Trainer recall:` below the editor. The exact registered invocation and your original request are displayed together: no model rewrite can silently remove an input, approval, or completion requirement. Recall never executes that invocation.
+
+For example:
+
+```text
+/trainer recall Investigate a small evidence-backed shortlist of hard-to-understand code hotspots. Choose one justified simplification without changing behavior. Ask before edits; no commits, releases, or installs.
+```
+
+If the installed `simplify` skill fits, the next-time prompt starts with `/skill:simplify` and retains the complete supplied request. The registry identifies skills separately from ordinary commands. Unavailable or intent-changing matches produce no recommendation; the four skills below are examples from MSSRT, not bundled Trainer dependencies.
+
+| Desired outcome | Skill invocation, only when registered |
+| --- | --- |
+| Move a project forward through one bounded delivered outcome | `/skill:advance` |
+| Make an evidenced code hotspot easier to understand without changing behavior | `/skill:simplify` |
+| Reassess purpose, knowledge, and implementation to find one justified improvement | `/skill:improve` |
+| Finish the current work, verify delivery, and clean up owned resources safely | `/skill:wrap-up` |
+
+Explicit skill invocation is an optional memory aid: ordinary intent should already select matching workflows. An agent's failure to select one is not a user prompting mistake. Automatic hints can cite live skills when concrete avoidable effort exists, but skill availability or an omitted slash command does not justify recurring advice.
+
+Recall works while automatic coaching is off without enabling it or recording a completed-work assessment. Its transient hint follows the same preservation and clearing rules as coaching. To recall a capability again, supply the request again; Trainer saves no hint history and scans no clipboard or cross-session archive. Recall requires idle primary/background work, accepts at most 8,000 UTF-8 bytes without truncation, and uses the same tool-free, 45-second, 128,000-byte request bounds as automatic assessment.
 
 ## What Triggers Coaching
 
@@ -59,6 +83,10 @@ omp --no-extensions --extension ./index.js
 The Node test suite covers evidence validation, incomplete/no-op outcomes, active-work suppression, replay, disabled-state restoration, late-result cancellation, and hint clearing/preservation. Model judgments additionally require native QA: exercise a useful alternative, an incomplete step, a task with no useful alternative, resume/replay, and an agent workflow-selection failure in a fresh OMP process. Verify the actual hint below the editor, coexistence with existing status information, preservation while composing/checking status, and clearing on new work or disable.
 
 Exercise `/trainer demo` separately: it must show an explicitly marked preview immediately, with no provider request, primary-agent start, or evaluation marker; preserve the disabled setting; cancel a pending assessment; and support argument autocomplete.
+
+Exercise recall with real installed skills in a fresh process: select among `advance`, `simplify`, `improve`, and `wrap-up` for their distinct outcomes; decline an unavailable skill and an intent-changing match. Verify the exact registered invocation, verbatim constraints, no primary execution/evaluation marker, unchanged disabled state, status preservation, cancellation, and native `recall` autocomplete. Model selection remains a judgment; registry validation prevents teaching a capability that is no longer available.
+
+For source QA, `--no-extensions` also skips plugin-provided skill discovery. Expose the actual installed skills through a disposable project's `.omp/skills` discovery path, or verify recall in a fresh normal process after installing the released Trainer artifact. Do not load both the installed Trainer and a source copy.
 
 Issue branches use `issue-<number>-<outcome>`. Open a linked draft PR, complete self-review and focused native QA, then merge into `main`. No publishing CI or npm registry release is configured: the GitHub repository is the installable artifact.
 
