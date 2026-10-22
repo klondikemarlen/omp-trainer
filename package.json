@@ -1,6 +1,6 @@
 {
   "name": "omp-trainer",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Evidence-backed, non-blocking post-completion coaching for lower-effort OMP use.",
   "type": "module",
   "repository": {
