@@ -18,8 +18,9 @@ function usefulEvaluation() {
     completed: true,
     completionEvidence: { id: "finished", quote: "The requested comparison is complete." },
     recommendation: {
+      kind: "alternative",
       capabilityId: "tool:read",
-      effortEvidence: [{ id: "human", quote: "I manually copied both files" }],
+      userEvidence: [{ id: "human", quote: "I manually copied both files" }],
       reason: "asking OMP to read the files instead of copying them manually.",
       shorterPrompt: "Compare both files directly; ask for approval before any edits.",
       preservesInputsAndApprovals: true,
@@ -32,7 +33,7 @@ test("when a supported alternative has real user evidence, one actionable prompt
   // Arrange
   const reply = JSON.stringify(usefulEvaluation())
   // Act
-  const result = validateEvaluation(reply, work, capabilities)
+  const result = validateEvaluation(reply, work, capabilities, "quiet")
   // Assert
   assert.match(result.message, /Compare both files directly; ask for approval before any edits\./)
 })
@@ -41,7 +42,7 @@ test("when the evaluator finds an incomplete unit, coaching remains silent", () 
   // Arrange
   const reply = JSON.stringify({ completed: false, recommendation: null })
   // Act
-  const result = validateEvaluation(reply, work, capabilities)
+  const result = validateEvaluation(reply, work, capabilities, "quiet")
   // Assert
   assert.deepEqual(result, { completed: false, message: null })
 })
@@ -51,7 +52,7 @@ test("when a completed task has no useful alternative, coaching remains silent",
   const evaluation = usefulEvaluation()
   evaluation.recommendation = null
   // Act
-  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities)
+  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities, "quiet")
   // Assert
   assert.deepEqual(result, { completed: true, message: null })
 })
@@ -61,7 +62,7 @@ test("when an alternative blames the primary agent, coaching remains silent", ()
   const evaluation = usefulEvaluation()
   evaluation.recommendation.agentFailure = true
   // Act
-  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities)
+  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities, "quiet")
   // Assert
   assert.equal(result.message, null)
 })
@@ -69,9 +70,9 @@ test("when an alternative blames the primary agent, coaching remains silent", ()
 test("when a claimed quote is not in user evidence, coaching remains silent", () => {
   // Arrange
   const evaluation = usefulEvaluation()
-  evaluation.recommendation.effortEvidence[0].quote = "A fabricated manual step"
+  evaluation.recommendation.userEvidence[0].quote = "A fabricated manual step"
   // Act
-  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities)
+  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities, "quiet")
   // Assert
   assert.equal(result.message, null)
 })
@@ -81,7 +82,7 @@ test("when a suggested capability is not installed, coaching remains silent", ()
   const evaluation = usefulEvaluation()
   evaluation.recommendation.capabilityId = "command:imaginary"
   // Act
-  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities)
+  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities, "quiet")
   // Assert
   assert.equal(result.message, null)
 })
@@ -91,7 +92,7 @@ test("when the alternative drops required approvals, coaching remains silent", (
   const evaluation = usefulEvaluation()
   evaluation.recommendation.preservesInputsAndApprovals = false
   // Act
-  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities)
+  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities, "quiet")
   // Assert
   assert.equal(result.message, null)
 })
@@ -136,7 +137,7 @@ test("when the complete answer is one character, the next task does not inherit 
   const shortWork = { key: "answer", messages: [{ id: "answer", role: "assistant", text: "4" }] }
   const reply = JSON.stringify({ completed: true, completionEvidence: { id: "answer", quote: "4" }, recommendation: null })
   // Act
-  const result = validateEvaluation(reply, shortWork, capabilities)
+  const result = validateEvaluation(reply, shortWork, capabilities, "quiet")
   // Assert
   assert.deepEqual(result, { completed: true, message: null })
 })
@@ -146,7 +147,7 @@ test("when a shorter prompt requires a file path, the required input is preserve
   const evaluation = usefulEvaluation()
   evaluation.recommendation.shorterPrompt = "Compare src/alpha.txt and src/beta.txt; ask before edits."
   // Act
-  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities)
+  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities, "quiet")
   // Assert
   assert.match(result.message, /Compare src\/alpha\.txt and src\/beta\.txt; ask before edits\./)
 })
@@ -191,4 +192,43 @@ test("when recall selects an ordinary command, its invocation stays separate fro
   // Assert
   assert.match(result, /^command: \/verifier\.\n[\s\S]*\nRequest: Show current verification status without running checks\.\n/)
   assert.doesNotMatch(result, /\/verifier Show current verification status/)
+})
+
+test("when verbose discovery fits an ordinary request, the optional tip cites the live capability without claiming wasted effort", () => {
+  // Arrange
+  const task = {
+    key: "answer",
+    messages: [
+      { id: "request", role: "user", text: "Explain alpha.txt. Do not edit it." },
+      { id: "answer", role: "assistant", text: "The explanation is complete." },
+    ],
+  }
+  const reply = JSON.stringify({
+    completed: true,
+    completionEvidence: { id: "answer", quote: "The explanation is complete." },
+    recommendation: {
+      kind: "discovery",
+      capabilityId: "tool:read",
+      userEvidence: [{ id: "request", quote: "Explain alpha.txt." }],
+      reason: "Read a known file directly when asking for an explanation.",
+      shorterPrompt: "Read and explain alpha.txt. Do not edit it.",
+      preservesInputsAndApprovals: true,
+      agentFailure: false,
+    },
+  })
+  // Act
+  const result = validateEvaluation(reply, task, capabilities, "verbose")
+  // Assert
+  assert.match(result.message, /tool: read \(omp:\/\/tools\/read\.md\)/)
+  assert.doesNotMatch(result.message, /You could have done this with less work/)
+})
+
+test("when quiet mode receives discovery instead of an evidenced alternative, no tip is shown", () => {
+  // Arrange
+  const evaluation = usefulEvaluation()
+  evaluation.recommendation.kind = "discovery"
+  // Act
+  const result = validateEvaluation(JSON.stringify(evaluation), work, capabilities, "quiet")
+  // Assert
+  assert.deepEqual(result, { completed: true, message: null })
 })

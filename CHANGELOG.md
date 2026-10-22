@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+- Session-persistent `/trainer verbose` and `/trainer quiet` controls, with native autocomplete and the active mode in status.
+- Verbose feedback for completed assessments with no supported tip, ineligible evidence, unconfirmed completion, and assessment failures.
+- Optional task-relevant capability reminders that teach live tools, commands, or skills without claiming the user's original request was wrong.
+
+### Changed
+- Default to verbose coaching so users can observe Trainer during normal use; `OMP_TRAINER_MODE=quiet` selects the default for new sessions.
+- Give verbose tips a short notification directing attention to the existing below-editor hint, without duplicating its full text.
+- Quiet mode retains avoidable-effort-only hints without automatic notifications. Both modes share the existing inference frequency, completion checks, context/time limits, cancellation, and replay protection.
+
 ## 0.4.1
 
 ### Fixed
