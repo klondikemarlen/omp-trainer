@@ -1,22 +1,20 @@
 import { availableCapabilities, captureWork, EVALUATION_TYPE, hasUnfinishedTodos, STATE_TYPE, textContent } from "./lib/evidence.js"
 import { evaluationPrompt, recallPrompt, validateEvaluation, validateRecall } from "./lib/coaching.js"
+import { readVerbosity, writeVerbosity } from "./lib/settings.js"
 
 const HINT_WIDGET = "omp-trainer.hint"
-
-function defaultMode() {
-  if (process.env.OMP_TRAINER_MODE === "quiet") return "quiet"
-
-  return "verbose"
-}
 
 export default function trainer(pi) {
   pi.setLabel("Trainer")
   let enabled = process.env.OMP_TRAINER_ENABLED !== "0"
-  let mode = defaultMode()
   let lastStatus = "Waiting for completed work"
   let stopObserved = false
   let pending
   let generation = 0
+
+  function agentDir(ctx) {
+    return ctx.agentDir || pi.pi.getAgentDir()
+  }
 
   function showHint(ctx, message, label = "Trainer hint") {
     ctx.ui.setWidget(HINT_WIDGET, `${label}: ${message}`.split("\n"), { placement: "belowEditor" })
@@ -24,7 +22,12 @@ export default function trainer(pi) {
 
   function reportOutcome(ctx, status) {
     lastStatus = status
-    if (mode === "verbose") ctx.ui.notify(`Trainer: ${status}.`, "info")
+    try {
+      if (readVerbosity(agentDir(ctx)) === "verbose") ctx.ui.notify(`Trainer: ${status}.`, "info")
+    } catch (error) {
+      lastStatus = `Unavailable: global Trainer verbosity: ${String(error?.message ?? error).slice(0, 300)}`
+      ctx.ui.notify(lastStatus, "warning")
+    }
   }
 
   function cancel(ctx) {
@@ -39,12 +42,10 @@ export default function trainer(pi) {
   function restore(_event, ctx) {
     cancel(ctx)
     enabled = process.env.OMP_TRAINER_ENABLED !== "0"
-    mode = defaultMode()
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.customType !== STATE_TYPE) continue
 
       if (typeof entry.data?.enabled === "boolean") enabled = entry.data.enabled
-      if (entry.data?.mode === "verbose" || entry.data?.mode === "quiet") mode = entry.data.mode
     }
     lastStatus = "Waiting for completed work"
   }
@@ -116,11 +117,12 @@ export default function trainer(pi) {
     }
     lastStatus = "Evaluating completed-work candidate"
     try {
-      const replyText = await requestAssessment(ctx, evaluationPrompt(work, capabilities, mode))
+      const replyText = await requestAssessment(ctx, evaluationPrompt(work, capabilities, readVerbosity(agentDir(ctx))))
       if (replyText === undefined || generation !== expectedGeneration || !canEvaluate(ctx)) return
       if (captureWork(ctx.sessionManager.getBranch())?.key !== work.key) return
 
-      const result = validateEvaluation(replyText, work, availableCapabilities(pi), mode)
+      // Re-read shared policy: another terminal may have turned discovery down during inference.
+      const result = validateEvaluation(replyText, work, availableCapabilities(pi), readVerbosity(agentDir(ctx)))
       // Metadata only: not model context. Persist before presentation for replay safety.
       pi.appendEntry(EVALUATION_TYPE, { key: work.key, completed: result.completed, shown: Boolean(result.message) })
       if (!result.completed) {
@@ -179,8 +181,8 @@ export default function trainer(pi) {
   }
 
   pi.registerCommand("trainer", {
-    description: "Post-completion coaching and capability recall: on, off, verbose, quiet, status, demo, recall",
-    getArgumentCompletions: prefix => ["on", "off", "verbose", "quiet", "status", "demo", "recall"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
+    description: "Post-completion coaching and capability recall: on, off, verbosity, status, demo, recall",
+    getArgumentCompletions: prefix => ["on", "off", "verbosity", "verbosity up", "verbosity down", "status", "demo", "recall"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
     handler: async (args, ctx) => {
       const input = args.trim() || "status"
       const [action, request = ""] = input.split(/\s+(.*)/s)
@@ -188,6 +190,28 @@ export default function trainer(pi) {
         await recall(ctx, request)
         return
       }
+
+      if (action === "verbosity") {
+        if (request && request !== "up" && request !== "down") {
+          ctx.ui.notify("Usage: /trainer verbosity [up|down]", "info")
+          return
+        }
+        try {
+          if (request) {
+            let verbosity = "quiet"
+            if (request === "up") verbosity = "verbose"
+
+            writeVerbosity(agentDir(ctx), verbosity)
+            cancel(ctx)
+          }
+          const verbosity = readVerbosity(agentDir(ctx))
+          ctx.ui.notify(`Trainer global verbosity: ${verbosity}. Shared across projects and running terminals in this OMP profile. Use /trainer verbosity up|down.`, "info")
+        } catch (error) {
+          ctx.ui.notify(`Trainer global verbosity unavailable: ${String(error?.message ?? error).slice(0, 300)}`, "warning")
+        }
+        return
+      }
+
       if (input === "demo") {
         cancel(ctx)
         showHint(ctx, "Demo — read known files directly instead of copying their contents into chat.\nNext time: “Read alpha.txt and beta.txt, add their apple counts, and report the total. Do not edit any files.”\nExample capability: read (omp://tools/read.md). Preview only; no task was assessed.")
@@ -195,18 +219,14 @@ export default function trainer(pi) {
         return
       }
 
-      if (input !== action || !["status", "on", "off", "verbose", "quiet"].includes(action)) {
-        ctx.ui.notify("Usage: /trainer on|off|verbose|quiet|status|demo|recall <request>", "info")
+      if (input !== action || !["status", "on", "off"].includes(action)) {
+        ctx.ui.notify("Usage: /trainer on|off|verbosity [up|down]|status|demo|recall <request>", "info")
         return
       }
       if (action !== "status") {
         cancel(ctx)
-        if (action === "on" || action === "off") {
-          enabled = action === "on"
-        } else {
-          mode = action
-        }
-        pi.appendEntry(STATE_TYPE, { enabled, mode })
+        enabled = action === "on"
+        pi.appendEntry(STATE_TYPE, { enabled })
         if (enabled) {
           lastStatus = "Waiting for completed work"
         } else {
@@ -216,7 +236,12 @@ export default function trainer(pi) {
       let state = "off"
       if (enabled) state = "on"
 
-      ctx.ui.notify(`Trainer 0.5.0: ${state}. ${lastStatus}. Mode: ${mode}. Use /trainer quiet for selective coaching or /trainer verbose for visible feedback. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
+      try {
+        const verbosity = readVerbosity(agentDir(ctx))
+        ctx.ui.notify(`Trainer 0.6.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down across all terminals in this OMP profile. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
+      } catch (error) {
+        ctx.ui.notify(`Trainer ${state}. Global verbosity unavailable: ${String(error?.message ?? error).slice(0, 300)}`, "warning")
+      }
     },
   })
 
@@ -234,7 +259,7 @@ export default function trainer(pi) {
   pi.on("agent_start", (_event, ctx) => cancel(ctx))
   pi.on("input", (event, ctx) => {
     const command = event.text?.trim()
-    if (command !== "/trainer" && command !== "/trainer status") cancel(ctx)
+    if (command !== "/trainer" && command !== "/trainer status" && command !== "/trainer verbosity") cancel(ctx)
   })
   pi.on("session_shutdown", (_event, ctx) => cancel(ctx))
   // Observe this boundary synchronously; never return a stop decision or await coaching here.
