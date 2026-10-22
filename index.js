@@ -179,7 +179,7 @@ export default function trainer(pi) {
         pi.appendEntry(STATE_TYPE, { enabled })
         lastStatus = enabled ? "Waiting for completed work" : "Disabled"
       }
-      ctx.ui.notify(`Trainer 0.4.0: ${enabled ? "on" : "off"}. ${lastStatus}. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
+      ctx.ui.notify(`Trainer 0.4.1: ${enabled ? "on" : "off"}. ${lastStatus}. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
     },
   })
 
