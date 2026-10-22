@@ -1,6 +1,8 @@
 import { availableCapabilities, captureWork, EVALUATION_TYPE, hasUnfinishedTodos, STATE_TYPE, textContent } from "./lib/evidence.js"
 import { evaluationPrompt, validateEvaluation } from "./lib/coaching.js"
 
+const HINT_WIDGET = "omp-trainer.hint"
+
 export default function trainer(pi) {
   pi.setLabel("Trainer")
   let enabled = process.env.OMP_TRAINER_ENABLED !== "0"
@@ -9,15 +11,17 @@ export default function trainer(pi) {
   let pending
   let generation = 0
 
-  function cancel() {
+  function cancel(ctx) {
     generation++
     pending?.controller.abort()
     pending = undefined
     stopObserved = false
+
+    if (ctx.agent?.kind === "main") ctx.ui.setWidget(HINT_WIDGET, undefined)
   }
 
   function restore(_event, ctx) {
-    cancel()
+    cancel(ctx)
     enabled = process.env.OMP_TRAINER_ENABLED !== "0"
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.customType === STATE_TYPE && typeof entry.data?.enabled === "boolean") enabled = entry.data.enabled
@@ -76,7 +80,9 @@ export default function trainer(pi) {
       // Metadata only: not model context. Persist before presentation for replay safety.
       pi.appendEntry(EVALUATION_TYPE, { key: work.key, completed: result.completed, shown: Boolean(result.message) })
       lastStatus = result.message ? "Coaching shown" : "No supported coaching opportunity"
-      if (result.message) ctx.ui.notify(result.message, "info")
+      if (result.message) {
+        ctx.ui.setWidget(HINT_WIDGET, `Trainer hint: ${result.message}`.split("\n"), { placement: "belowEditor" })
+      }
     } catch (error) {
       if (generation === expectedGeneration) lastStatus = `Unavailable: ${String(error?.message ?? error).slice(0, 300)}`
     } finally {
@@ -95,7 +101,7 @@ export default function trainer(pi) {
         return
       }
       if (action === "on" || action === "off") {
-        cancel()
+        cancel(ctx)
         enabled = action === "on"
         pi.appendEntry(STATE_TYPE, { enabled })
         lastStatus = enabled ? "Waiting for completed work" : "Disabled"
@@ -115,11 +121,11 @@ export default function trainer(pi) {
   })
 
   for (const event of ["session_start", "session_switch", "session_branch", "session_tree"]) pi.on(event, restore)
-  pi.on("agent_start", cancel)
-  pi.on("input", event => {
-    if (event.text?.trim() !== "/trainer status") cancel()
+  pi.on("agent_start", (_event, ctx) => cancel(ctx))
+  pi.on("input", (event, ctx) => {
+    if (event.text?.trim() !== "/trainer status") cancel(ctx)
   })
-  pi.on("session_shutdown", cancel)
+  pi.on("session_shutdown", (_event, ctx) => cancel(ctx))
   // Observe this boundary synchronously; never return a stop decision or await coaching here.
   pi.on("session_stop", (_event, ctx) => {
     if (ctx.agent?.kind === "main") stopObserved = true
