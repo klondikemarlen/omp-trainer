@@ -23,11 +23,13 @@ The on/off choice is saved in the current session and restored on resume. A save
 
 Trainer observes `session_stop` without returning a decision, then schedules a managed callback after `agent_end`. Neither event alone proves the user's task is complete. The callback requires the main agent to be idle, no queued messages or outstanding background delivery, no unfinished recorded todos, and a successful terminal assistant answer. It then asks the **current configured model** to assess whether the relevant requested unit is actually complete.
 
-An intermediate result, unfinished task, pending question, approval pause, or ambiguous completion must produce no coaching. If a concrete supported improvement exists, Trainer shows one terminal notification:
+An intermediate result, unfinished task, pending question, approval pause, or ambiguous completion must produce no coaching. If a concrete supported improvement exists, Trainer shows one labelled hint below the editor, alongside OMP's instance/development/cwd information:
 
-> You could have done this with less work by asking OMP to read both known files directly.
+> Trainer hint: You could have done this with less work by asking OMP to read both known files directly.
 > Next time: “Read alpha.txt and beta.txt, add their apple counts, and report the total. No edits without approval.”
 > Available capability: read (omp://tools/read.md).
+
+The hint stays visible while you compose your next request or query `/trainer status` (also the default `/trainer` action). It clears when you submit new work, start another task, disable/reset Trainer, change sessions, or shut down. Hints are not restored on resume, and coaching is not also emitted as a notification. Status and usage commands still use notifications.
 
 Recommendations must quote real user effort and cite an active documented tool or a registered command's exact invocation. A shorter prompt must preserve required inputs, constraints, and approvals. Long prompts, missing slash commands, necessary retries, and the agent's failure to select an existing workflow are not user mistakes.
 
@@ -39,7 +41,7 @@ Trainer reads only the active session branch after the last assessed completed u
 
 The `runEphemeralTurn` API normally includes the current conversation snapshot. Trainer uses OMP's supported context transform to replace conversation messages with its assessment prompt, containing only the bounded evidence and available-capability catalog. This applies only to Trainer's exact in-flight request; primary turns and unrelated side requests keep their history. The **whole serialized request** remains limited to 128,000 bytes, including the inherited system prompt and any other extension transforms. Inference uses the session's configured provider, consumes its quota, disables tools, and is cancelled after 45 seconds or when new work/session changes intervene. Codex ephemeral turns reject output-token caps, so Trainer does not request one or switch models; the host's default reply bound and the cancellation deadline still apply. Unsupported hosts, failed inference, malformed decisions, or exceeded limits produce no suggestion; `/trainer status` exposes the latest diagnostic.
 
-Only control flags and evaluation markers are appended as namespaced session metadata, outside model-visible conversation. No private prompt archive or cross-session archive scan exists. Markers prevent replay/resume and advisor/report-only updates from reusing the same completed effort. The coaching itself is a UI notification, not a message to the primary or other advisors.
+Only control flags and evaluation markers are appended as namespaced session metadata, outside model-visible conversation. No private prompt archive or cross-session archive scan exists. Markers prevent replay/resume and advisor/report-only updates from reusing the same completed effort. The coaching itself is a below-editor widget, not a message to the primary or other advisors.
 
 If you have never seen coaching, run `/trainer status` in a new OMP process. `No supported coaching opportunity` means an assessment produced no suggestion; `Skipped` means the work was ineligible; `Unavailable` identifies a failed assessment. Silence alone does not establish that Trainer is working. Suggestions are deliberately uncommon: ordinary requests, necessary retries, and agent mistakes should not trigger prompting advice.
 
@@ -51,7 +53,7 @@ git diff --check
 omp --no-extensions --extension ./index.js
 ```
 
-The Node test suite covers evidence validation, incomplete/no-op outcomes, active-work suppression, replay, disabled-state restoration, and late-result cancellation. Model judgments additionally require native QA: exercise a useful alternative, an incomplete step, a task with no useful alternative, resume/replay, and an agent workflow-selection failure in a fresh OMP process.
+The Node test suite covers evidence validation, incomplete/no-op outcomes, active-work suppression, replay, disabled-state restoration, late-result cancellation, and hint clearing/preservation. Model judgments additionally require native QA: exercise a useful alternative, an incomplete step, a task with no useful alternative, resume/replay, and an agent workflow-selection failure in a fresh OMP process. Verify the actual hint below the editor, coexistence with existing status information, preservation while composing/checking status, and clearing on new work or disable.
 
 Issue branches use `issue-<number>-<outcome>`. Open a linked draft PR, complete self-review and focused native QA, then merge into `main`. No publishing CI or npm registry release is configured: the GitHub repository is the installable artifact.
 

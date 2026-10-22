@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+### Changed
+- Present coaching as a labelled `Trainer hint:` below the editor instead of an unlabelled notification.
+- Keep hints visible while composing or checking status; clear them on new work, disable/reset, session changes, and shutdown without replaying old hints.
+
 ## 0.1.1
 
 ### Fixed
