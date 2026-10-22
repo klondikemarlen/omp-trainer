@@ -12,12 +12,15 @@ omp plugin install github:klondikemarlen/omp-trainer
 Start a **new OMP process** after installation. Trainer is enabled by default.
 
 - `/trainer status` — show the loaded version, enabled state, and latest evaluation outcome.
+- `/trainer demo` — immediately show a clearly labelled preview through the real below-editor hint widget, without model inference.
 - `/trainer off` — disable coaching and cancel pending inference.
 - `/trainer on` — enable coaching.
 - `OMP_TRAINER_ENABLED=0 omp` — default new sessions to disabled.
 - `omp plugin disable omp-trainer` — disable the installed plugin entirely.
 
-The on/off choice is saved in the current session and restored on resume. A saved session choice overrides the environment default. The command and its `on`, `off`, and `status` arguments support native autocomplete.
+The on/off choice is saved in the current session and restored on resume. A saved session choice overrides the environment default. The command and its `on`, `off`, `status`, and `demo` arguments support native autocomplete.
+
+Use `/trainer demo` when you want the hint to actually pop up without waiting for an automatic coaching opportunity. It is explicitly marked as a preview, not an assessment of your current work; it records no evaluation marker and starts no primary turn. It also works while automatic coaching is off without enabling it. The demo cancels pending automatic inference so a late result cannot overwrite it, and follows the same hint-clearing rules as normal coaching.
 
 ## What Triggers Coaching
 
@@ -43,7 +46,7 @@ The `runEphemeralTurn` API normally includes the current conversation snapshot. 
 
 Only control flags and evaluation markers are appended as namespaced session metadata, outside model-visible conversation. No private prompt archive or cross-session archive scan exists. Markers prevent replay/resume and advisor/report-only updates from reusing the same completed effort. The coaching itself is a below-editor widget, not a message to the primary or other advisors.
 
-If you have never seen coaching, run `/trainer status` in a new OMP process. `No supported coaching opportunity` means an assessment produced no suggestion; `Skipped` means the work was ineligible; `Unavailable` identifies a failed assessment. Silence alone does not establish that Trainer is working. Suggestions are deliberately uncommon: ordinary requests, necessary retries, and agent mistakes should not trigger prompting advice.
+If you have never seen coaching, `/trainer demo` checks that the hint renders, while `/trainer status` reports the latest automatic outcome. A working demo does not prove automatic assessment succeeded. `No supported coaching opportunity` means an assessment produced no suggestion; `Skipped` means the work was ineligible; `Unavailable` identifies a failed assessment. Silence alone does not establish that Trainer is working. Suggestions are deliberately uncommon: ordinary requests, necessary retries, and agent mistakes should not trigger prompting advice.
 
 ## Development and Release
 
@@ -54,6 +57,8 @@ omp --no-extensions --extension ./index.js
 ```
 
 The Node test suite covers evidence validation, incomplete/no-op outcomes, active-work suppression, replay, disabled-state restoration, late-result cancellation, and hint clearing/preservation. Model judgments additionally require native QA: exercise a useful alternative, an incomplete step, a task with no useful alternative, resume/replay, and an agent workflow-selection failure in a fresh OMP process. Verify the actual hint below the editor, coexistence with existing status information, preservation while composing/checking status, and clearing on new work or disable.
+
+Exercise `/trainer demo` separately: it must show an explicitly marked preview immediately, with no provider request, primary-agent start, or evaluation marker; preserve the disabled setting; cancel a pending assessment; and support argument autocomplete.
 
 Issue branches use `issue-<number>-<outcome>`. Open a linked draft PR, complete self-review and focused native QA, then merge into `main`. No publishing CI or npm registry release is configured: the GitHub repository is the installable artifact.
 
