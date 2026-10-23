@@ -1,7 +1,7 @@
 {
   "name": "omp-trainer",
-  "version": "0.7.1",
-  "description": "Per-prompt passive feature hints and on-demand installed-capability recall for OMP.",
+  "version": "0.8.0",
+  "description": "Readable per-prompt hints and on-demand recall for registered OMP skills and commands.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -19,5 +19,8 @@
   "omp": {
     "extensions": ["./index.js"]
   },
-  "keywords": ["omp-plugin", "coaching"]
+  "keywords": ["omp-plugin", "coaching"],
+  "dependencies": {
+    "wrap-ansi": "^10.0.2"
+  }
 }
