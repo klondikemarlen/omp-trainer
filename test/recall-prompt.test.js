@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { availableCapabilities } from "../lib/available-capabilities.js"
+
 import { validateRecall } from "../lib/recall-prompt.js"
 
 test("when a recalled skill fits, its registered invocation keeps every original constraint", () => {
@@ -43,4 +45,17 @@ test("when recall selects an ordinary command, its invocation stays separate fro
   // Assert
   assert.match(result, /^command: \/verifier\.\n[\s\S]*\nRequest: Show current verification status without running checks\.\n/)
   assert.doesNotMatch(result, /\/verifier Show current verification status/)
+})
+
+test("when an old tool capability ID is returned, recall rejects it against the live catalog", () => {
+  // Arrange
+  const capabilities = availableCapabilities({
+    getActiveTools: () => ["read", "grep"],
+    getCommands: () => [{ name: "read-files", description: "Read file contents directly." }],
+  })
+  const reply = JSON.stringify({ capabilityId: "tool:read", reason: "Read the requested file.", preservesIntent: true })
+  // Act
+  const result = validateRecall(reply, "Read alpha.txt.", capabilities)
+  // Assert
+  assert.equal(result, null)
 })

@@ -1,9 +1,9 @@
 # omp-trainer
-A passive feature reminder on every submitted prompt: related when feature keywords fit, otherwise random. Explicit capability recall remains available when you want model-assisted help finding a tool, command, or skill.
+A passive skill or command reminder on every submitted prompt: related when feature keywords fit, otherwise random. Explicit recall provides model-assisted help finding a registered skill or slash command.
 
 ## Install and Control
 
-Requires OMP's main-session external `input` hook, active tool/command catalog, and keyed footer statuses (exercised with OMP 18.12.6). Explicit recall additionally uses `runEphemeralTurn`, context transforms, and managed timers.
+Requires OMP's main-session external `input` hook, registered command/skill catalog, and keyed footer statuses (exercised with OMP 18.12.6). Explicit recall additionally uses `runEphemeralTurn`, context transforms, and managed timers.
 
 ```sh
 omp plugin install github:klondikemarlen/omp-trainer
@@ -13,7 +13,7 @@ Start a **new OMP process** after installation to load this release. Trainer is 
 
 - `/trainer status` — show the loaded version, session enabled state, global verbosity, and latest hint or recall outcome.
 - `/trainer demo` — immediately show a clearly labelled preview through the real footer card, without model inference.
-- `/trainer recall <request>` — find one relevant currently available tool, command, or skill without executing the request.
+- `/trainer recall <request>` — find one relevant registered skill or command without executing the request.
 - `/trainer verbosity` — report the shared verbosity setting.
 - `/trainer verbosity up` — select verbose coaching across all projects and running terminals in this OMP profile.
 - `/trainer verbosity down` — select quiet coaching everywhere in this profile.
@@ -34,8 +34,8 @@ Use `/trainer demo` to preview the same footer card immediately, without submitt
 
 | Level | Every supported prompt | Card detail |
 | --- | --- | --- |
-| `verbose` (default) | A related or random feature reminder | Feature category, exact invocation or documented tool citation, and a concise description. |
-| `quiet` | A related or random feature reminder | One compact line identifying the feature and its invocation or citation. |
+| `verbose` (default) | A related or random skill/command reminder | Feature category, exact registered invocation, and a concise description, wrapped to the terminal width. |
+| `quiet` | A related or random skill/command reminder | A compact feature summary and invocation, wrapped as needed. |
 
 Use `/trainer verbosity down` when the detailed cards are distracting, `/trainer verbosity up` to restore descriptions, or `/trainer off` to stop automatic hints in the current session. Global verbosity never enables a deliberately disabled session. Passive hints make **no provider requests** and do not consume model quota.
 
@@ -51,7 +51,7 @@ For example:
 
 If the installed `simplify` skill fits, the next-time prompt starts with `/skill:simplify` and retains the complete supplied request. The registry identifies skills separately from ordinary commands. Unavailable or intent-changing matches produce no recommendation; the four skills below are examples from MSSRT, not bundled Trainer dependencies.
 
-Only skills combine their invocation with your request as a next-time prompt. Ordinary commands display the registered invocation separately from a `Request:` line: the command catalog does not establish which subcommands or arguments they accept. Tool matches also keep the request as prose rather than inventing slash syntax.
+Only skills combine their invocation with your request as a next-time prompt. Ordinary commands display the registered invocation separately from a `Request:` line: the command catalog does not establish which subcommands or arguments they accept.
 
 | Desired outcome | Skill invocation, only when registered |
 | --- | --- |
@@ -71,18 +71,23 @@ Trainer observes human input **at submission**, before command/skill expansion a
 Selection is deliberately simple and model-free:
 - Meaningful feature-name or description keywords can select a **Related feature**. This is a keyword heuristic, not a semantic assessment of your intent.
 - With no supported keyword match, a **Random feature reminder** teaches an available capability without pretending it relates to the task. When alternatives exist, random selection avoids the immediately previous feature; related prompts can still select the same relevant feature.
-- The catalog includes the documented `read`, `grep`, `glob`, and `task` tools when active, plus currently registered commands and skills. Trainer's own controls can also be taught. No unavailable command, undocumented arguments, or rewritten user prompt is invented.
+- The catalog contains only currently registered skills and slash commands that the prompter can invoke. Agent tools such as `read`, `grep`, `glob`, and `task` are not recommendations. Trainer's own controls can also be taught. No unavailable command, undocumented arguments, or rewritten user prompt is invented.
 
 For example:
 
-> --- Trainer hint -----------------------
-> Related feature: tool: read (omp://tools/read.md).
-> Read file contents directly
-> ----------------------------------------
+> --- Trainer hint -------------------------------------------
+> Related feature: skill: /skill:simplify.
+> Make an evidenced code hotspot easier to understand without
+> changing behavior.
+> ------------------------------------------------------------
 
 The card stays visible during agent start, streaming, completion, and composing the next request. The next submitted prompt replaces it. Trainer appears **below the instance, development-time, and cwd/worktree messages**, between dashed separators, with no duplicate notification. Demo, recall, and availability diagnostics use the same card.
 
-OMP 18.12.6 renders below-editor widgets above footer statuses, so Trainer uses its own lexically last `zz-omp-trainer.hint.*` status rows instead. Other extensions retain ownership of their statuses and can refresh them without moving Trainer above them. Cards are bounded to ten rows, including borders and an omission notice when needed; OMP applies terminal-width truncation to each row.
+OMP 18.12.6 renders below-editor widgets above footer statuses, so Trainer uses its own lexically last `zz-omp-trainer.hint.*` status rows instead. Other extensions retain ownership of their statuses and can refresh them without moving Trainer above them.
+
+In a native TUI, both borders fill the terminal's actual column count. Text wraps by display width, including Unicode and long unbroken invocations. The existing card reflows immediately on terminal resize, and widening removes stale continuation rows. The card retains all supplied content rather than imposing a fixed physical-row limit; short terminals may not have room to display an unusually long explicit recall all at once.
+
+RPC hosts do not expose their viewport dimensions through OMP 18.12.6's status API. They receive an 80-column wrapped card; remote full-width borders and resize reflow are not guaranteed. Native resizing uses the local TTY's `resize` event, not polling or inference, and the listener is removed when the card is cleared.
 
 `/trainer`, `/trainer status`, and `/trainer verbosity` preserve the card. Trainer's own commands do not trigger a second passive reminder: demo, recall, disable, and verbosity changes own their display behavior. Session changes and shutdown clear the card without replaying it on resume. When no other feature catalog is available, Trainer can still remind you about its own status control.
 
@@ -92,7 +97,7 @@ These are passive learning cards, **not instructions to the primary agent**, cor
 
 ## Evidence, Privacy, and Limits
 
-Automatic hints inspect only the submitted text for keyword selection and the live capability catalog. They do not scan conversation history, wait for stop hooks, infer task completion, or request an assessment. Long prompts and catalogs are not rejected by inference evidence limits. Feature descriptions are condensed to a single line of at most 240 characters in detailed cards; user requests are not rewritten.
+Automatic hints inspect only the submitted text for keyword selection and the live skill/command catalog. They do not scan conversation history, wait for stop hooks, infer task completion, or request an assessment. Long prompts and catalogs are not rejected by inference evidence limits. Feature descriptions are summarized to at most 240 characters, then wrapped for display; user requests are not rewritten.
 
 Only the session enabled flag is appended as Trainer state metadata. The shared settings file stores only verbosity. Trainer retains the previous feature identifier in memory to avoid consecutive random repeats, but stores no prompt or hint archive. Historical completion-assessment markers are no longer read or written. The footer card is not injected into primary/advisor model context.
 
@@ -112,9 +117,9 @@ git diff --check
 omp --no-extensions --extension ./index.js
 ```
 
-The Node suite covers feature-name/description matching, random fallback and immediate-repeat avoidance, active capability filtering, immediate first/busy/image/skill input, hint persistence through agent lifecycle, disabled-state restoration, global detail changes, and explicit recall validation/cancellation/context isolation. Completion-evidence tests were removed with the obsolete automatic evaluator.
+The Node suite covers skill/command selection, exclusion of agent tools, random fallback and immediate-repeat avoidance, immediate first/busy/image/skill input, hint persistence, disabled-state restoration, global detail changes, full-width borders, Unicode/long-token wrapping, resize cleanup, and explicit recall validation/cancellation/context isolation. Completion-evidence tests were removed with the obsolete automatic evaluator.
 
-Native QA must exercise a first prompt and confirm its card appears **before `agent_start`**, then stays visible through the actual primary turn and while composing. Verify the card follows instance, development-time, and worktree status rows, including after those statuses refresh, at wide and narrow terminal widths. Verify both a related request and a random reminder, plus steering/follow-up submission while work is active. Backend delivery/replay and synthetic updates must not rotate the card again. Observe that ordinary prompt hints request no ephemeral turn.
+Native QA must exercise a first prompt and confirm its card appears **before `agent_start`**, then stays visible through the actual primary turn and while composing. Verify the card follows instance, development-time, and worktree status rows, including after those statuses refresh. Use a long registered skill/command description: check the complete text and exact full-width borders at wide and narrow widths, then resize the same visible card and confirm reflow without a new prompt or stale rows. Verify related and random reminders and steering/follow-up submission while work is active. Backend delivery/replay and synthetic updates must not rotate the card again. Observe that ordinary prompt hints request no ephemeral turn.
 
 With two processes already running in different projects, change global verbosity in one and confirm the next prompt in the other gets detailed or compact output as selected, never silence solely because it is quiet. Preserve disabled sessions, status-query behavior, session switching, and native control autocomplete. Use an isolated agent-directory adapter for source QA so shared-preference checks do not change personal settings.
 

@@ -1,10 +1,11 @@
 import { availableCapabilities } from "./lib/available-capabilities.js"
 import { promptHint } from "./lib/prompt-hint.js"
 import { recallPrompt, validateRecall } from "./lib/recall-prompt.js"
+import { renderHintCard } from "./lib/render-hint-card.js"
 import { readVerbosity, writeVerbosity } from "./lib/settings.js"
 
 // Status rows sort by key; keep the card after instance, project-time, and worktree statuses.
-const HINT_STATUS_KEYS = Array.from({ length: 10 }, (_value, index) => `zz-omp-trainer.hint.${String(index).padStart(2, "0")}`)
+const HINT_STATUS_PREFIX = "zz-omp-trainer.hint."
 const STATE_TYPE = "omp-trainer.state"
 
 function textContent(content) {
@@ -21,17 +22,40 @@ export function trainer(pi) {
   let pending
   let generation = 0
   let previousCapabilityId
+  let visibleHint
+  let hintRowCount = 0
+  let listeningForResize = false
 
   function agentDir(ctx) {
     return ctx.agentDir || pi.pi.getAgentDir()
   }
 
-  function showHint(ctx, message, label = "Trainer hint") {
-    let lines = message.split("\n")
-    if (lines.length > 8) lines = [...lines.slice(0, 7), "… additional hint lines omitted"]
+  function setHintRows(ctx, rows) {
+    const count = Math.max(hintRowCount, rows.length)
+    for (let index = 0; index < count; index++) {
+      const key = `${HINT_STATUS_PREFIX}${String(index).padStart(5, "0")}`
+      ctx.ui.setStatus(key, rows[index])
+    }
+    hintRowCount = rows.length
+  }
 
-    const card = [`--- ${label} `.padEnd(40, "-"), ...lines, "-".repeat(40)]
-    for (const [index, key] of HINT_STATUS_KEYS.entries()) ctx.ui.setStatus(key, card[index])
+  function renderHint() {
+    if (!visibleHint) return
+
+    const { ctx, message, label } = visibleHint
+    let columns = 80
+    if (ctx.mode === "tui" && process.stdout.isTTY) columns = process.stdout.columns || columns
+
+    setHintRows(ctx, renderHintCard(message, label, columns))
+  }
+
+  function showHint(ctx, message, label = "Trainer hint") {
+    visibleHint = { ctx, message, label }
+    renderHint()
+    if (!listeningForResize && ctx.mode === "tui" && process.stdout.isTTY) {
+      process.stdout.on("resize", renderHint)
+      listeningForResize = true
+    }
   }
 
   function cancelRequest() {
@@ -43,7 +67,12 @@ export function trainer(pi) {
   function cancel(ctx) {
     cancelRequest()
     if (ctx.agent?.kind === "main") {
-      for (const key of HINT_STATUS_KEYS) ctx.ui.setStatus(key, undefined)
+      visibleHint = undefined
+      if (listeningForResize) {
+        process.stdout.off("resize", renderHint)
+        listeningForResize = false
+      }
+      setHintRows(ctx, [])
     }
   }
 
@@ -202,7 +231,7 @@ export function trainer(pi) {
 
       if (input === "demo") {
         cancel(ctx)
-        showHint(ctx, "Demo — read can inspect known files directly.\nExample feature: tool: read (omp://tools/read.md).\nPreview only; nothing executed.")
+        showHint(ctx, "Demo — /trainer status shows the loaded version and hint settings.\nPreview only; nothing executed.")
         lastStatus = "Demo hint shown; nothing executed"
         return
       }
@@ -226,7 +255,7 @@ export function trainer(pi) {
 
       try {
         const verbosity = readVerbosity(agentDir(ctx))
-        ctx.ui.notify(`Trainer 0.7.1: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
+        ctx.ui.notify(`Trainer 0.8.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
       } catch (error) {
         ctx.ui.notify(`Trainer ${state}. Global verbosity unavailable: ${String(error?.message ?? error).slice(0, 300)}`, "warning")
       }
