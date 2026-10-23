@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+### Added
+- Immediate passive learning cards on every supported main-session user prompt, including input submitted while work is running.
+- Keyword-related feature reminders, with labelled random discovery when no match exists and no immediate random repeat when alternatives are available.
+
+### Changed
+- Keep hints visible through primary start, streaming, and completion in the existing below-editor location.
+- Global verbosity now selects detailed or compact per-prompt cards; both levels show a hint on every prompt, while session off disables passive hints.
+- Automatic hints use no inference or conversation scan. Explicit `/trainer recall` retains model-assisted capability matching and its existing bounds.
+
+### Removed
+- Completion-dependent automatic assessment, unfinished-work/evidence gates, assessment timers, and new evaluation markers.
+
 ## 0.6.0
 
 ### Added

@@ -1,16 +1,25 @@
-import { availableCapabilities, captureWork, EVALUATION_TYPE, hasUnfinishedTodos, STATE_TYPE, textContent } from "./lib/evidence.js"
-import { evaluationPrompt, recallPrompt, validateEvaluation, validateRecall } from "./lib/coaching.js"
+import { availableCapabilities } from "./lib/available-capabilities.js"
+import { promptHint } from "./lib/prompt-hint.js"
+import { recallPrompt, validateRecall } from "./lib/recall-prompt.js"
 import { readVerbosity, writeVerbosity } from "./lib/settings.js"
 
 const HINT_WIDGET = "omp-trainer.hint"
+const STATE_TYPE = "omp-trainer.state"
 
-export default function trainer(pi) {
+function textContent(content) {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+
+  return content.filter(block => block.type === "text").map(block => block.text).join("\n")
+}
+
+export function trainer(pi) {
   pi.setLabel("Trainer")
   let enabled = process.env.OMP_TRAINER_ENABLED !== "0"
-  let lastStatus = "Waiting for completed work"
-  let stopObserved = false
+  let lastStatus = "Waiting for a user prompt"
   let pending
   let generation = 0
+  let previousCapabilityId
 
   function agentDir(ctx) {
     return ctx.agentDir || pi.pi.getAgentDir()
@@ -20,22 +29,14 @@ export default function trainer(pi) {
     ctx.ui.setWidget(HINT_WIDGET, `${label}: ${message}`.split("\n"), { placement: "belowEditor" })
   }
 
-  function reportOutcome(ctx, status) {
-    lastStatus = status
-    try {
-      if (readVerbosity(agentDir(ctx)) === "verbose") ctx.ui.notify(`Trainer: ${status}.`, "info")
-    } catch (error) {
-      lastStatus = `Unavailable: global Trainer verbosity: ${String(error?.message ?? error).slice(0, 300)}`
-      ctx.ui.notify(lastStatus, "warning")
-    }
-  }
-
-  function cancel(ctx) {
+  function cancelRequest() {
     generation++
     pending?.controller.abort()
     pending = undefined
-    stopObserved = false
+  }
 
+  function cancel(ctx) {
+    cancelRequest()
     if (ctx.agent?.kind === "main") ctx.ui.setWidget(HINT_WIDGET, undefined)
   }
 
@@ -47,7 +48,8 @@ export default function trainer(pi) {
 
       if (typeof entry.data?.enabled === "boolean") enabled = entry.data.enabled
     }
-    lastStatus = "Waiting for completed work"
+    previousCapabilityId = undefined
+    lastStatus = "Waiting for a user prompt"
   }
 
   function canRequest(ctx) {
@@ -57,11 +59,7 @@ export default function trainer(pi) {
     return ctx.agent?.kind === "main" && ctx.hasUI && ctx.isIdle() && !ctx.hasPendingMessages()
   }
 
-  function canEvaluate(ctx) {
-    return enabled && canRequest(ctx)
-  }
-
-  async function requestAssessment(ctx, promptText) {
+  async function requestRecall(ctx, promptText) {
     if (!ctx.runEphemeralTurn) throw new Error("this OMP host has no runEphemeralTurn API")
 
     const expectedGeneration = generation
@@ -80,7 +78,7 @@ export default function trainer(pi) {
       })
       if (generation !== expectedGeneration || !canRequest(ctx)) return
       if (ctx.sessionManager.getSessionId() !== sessionId) return
-      if (controller.signal.aborted) throw new Error("assessment timed out")
+      if (controller.signal.aborted) throw new Error("recall timed out")
 
       return replyText
     } catch (error) {
@@ -93,52 +91,35 @@ export default function trainer(pi) {
     }
   }
 
-  async function evaluate(ctx, expectedGeneration) {
-    if (generation !== expectedGeneration || !canEvaluate(ctx)) return
-    if (!ctx.runEphemeralTurn) {
-      reportOutcome(ctx, "Unavailable: this OMP host has no runEphemeralTurn API")
-      return
-    }
-    const entries = ctx.sessionManager.getBranch()
-    if (hasUnfinishedTodos(entries)) {
-      reportOutcome(ctx, "Skipped: unfinished todos")
-      return
-    }
-    const work = captureWork(entries)
-    if (!work) {
-      reportOutcome(ctx, "Skipped: no bounded completed-work candidate")
-      return
-    }
-    if (ctx.sessionManager.getEntries().some(entry => entry.customType === EVALUATION_TYPE && entry.data?.key === work.key)) return
-    const capabilities = availableCapabilities(pi)
-    if (!capabilities.length) {
-      reportOutcome(ctx, "Skipped: no bounded available-capability catalog")
-      return
-    }
-    lastStatus = "Evaluating completed-work candidate"
+  function showPromptHint(event, ctx) {
+    if (ctx.agent?.kind !== "main" || !ctx.hasUI) return
+    if (event.source !== "interactive" && event.source !== "rpc") return
+
+    const request = event.text?.trim() ?? ""
+    if (!request && !event.images?.length) return
+    if (/^\/trainer(?:\s|$)/.test(request)) return
+
+    cancel(ctx)
+    if (!enabled) return
+
     try {
-      const replyText = await requestAssessment(ctx, evaluationPrompt(work, capabilities, readVerbosity(agentDir(ctx))))
-      if (replyText === undefined || generation !== expectedGeneration || !canEvaluate(ctx)) return
-      if (captureWork(ctx.sessionManager.getBranch())?.key !== work.key) return
-
-      // Re-read shared policy: another terminal may have turned discovery down during inference.
-      const result = validateEvaluation(replyText, work, availableCapabilities(pi), readVerbosity(agentDir(ctx)))
-      // Metadata only: not model context. Persist before presentation for replay safety.
-      pi.appendEntry(EVALUATION_TYPE, { key: work.key, completed: result.completed, shown: Boolean(result.message) })
-      if (!result.completed) {
-        reportOutcome(ctx, "Deferred: completion not confirmed")
+      const hint = promptHint(request, availableCapabilities(pi), readVerbosity(agentDir(ctx)), previousCapabilityId)
+      if (!hint) {
+        showHint(ctx, "Feature reminder: /trainer status shows whether hints are on and the shared global verbosity.")
+        lastStatus = "Trainer control reminder shown for latest prompt"
         return
       }
 
-      if (!result.message) {
-        reportOutcome(ctx, "Assessed completed work: no supported coaching opportunity")
-        return
+      previousCapabilityId = hint.capabilityId
+      if (hint.related) {
+        lastStatus = "Related feature shown for latest prompt"
+      } else {
+        lastStatus = "Random feature reminder shown for latest prompt"
       }
-
-      showHint(ctx, result.message)
-      reportOutcome(ctx, "Coaching shown below the input box")
+      showHint(ctx, hint.message)
     } catch (error) {
-      if (generation === expectedGeneration) reportOutcome(ctx, `Unavailable: ${String(error?.message ?? error).slice(0, 300)}`)
+      lastStatus = `Unavailable: ${String(error?.message ?? error).slice(0, 300)}`
+      showHint(ctx, lastStatus, "Trainer status")
     }
   }
 
@@ -157,17 +138,17 @@ export default function trainer(pi) {
     }
     cancel(ctx)
     const expectedGeneration = generation
-    const capabilities = availableCapabilities(pi)
-    if (!capabilities.length) {
-      ctx.ui.notify("Recall skipped: no bounded available-capability catalog.", "info")
+    const capabilities = availableCapabilities(pi).filter(capability => capability.name !== "trainer")
+    if (!capabilities.length || Buffer.byteLength(JSON.stringify(capabilities)) > 24_000) {
+      ctx.ui.notify("Recall skipped: no available-capability catalog within 24,000 UTF-8 bytes.", "info")
       return
     }
     lastStatus = "Finding a capability for your request"
     try {
-      const replyText = await requestAssessment(ctx, recallPrompt(request, capabilities))
+      const replyText = await requestRecall(ctx, recallPrompt(request, capabilities))
       if (replyText === undefined || generation !== expectedGeneration) return
 
-      const message = validateRecall(replyText, request, availableCapabilities(pi))
+      const message = validateRecall(replyText, request, availableCapabilities(pi).filter(capability => capability.name !== "trainer"))
       lastStatus = "Recall: no supported match"
       if (message) lastStatus = "Recall shown; nothing executed"
 
@@ -181,7 +162,7 @@ export default function trainer(pi) {
   }
 
   pi.registerCommand("trainer", {
-    description: "Post-completion coaching and capability recall: on, off, verbosity, status, demo, recall",
+    description: "Per-prompt feature hints and model-assisted recall: on, off, verbosity, status, demo, recall",
     getArgumentCompletions: prefix => ["on", "off", "verbosity", "verbosity up", "verbosity down", "status", "demo", "recall"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
     handler: async (args, ctx) => {
       const input = args.trim() || "status"
@@ -214,8 +195,8 @@ export default function trainer(pi) {
 
       if (input === "demo") {
         cancel(ctx)
-        showHint(ctx, "Demo — read known files directly instead of copying their contents into chat.\nNext time: “Read alpha.txt and beta.txt, add their apple counts, and report the total. Do not edit any files.”\nExample capability: read (omp://tools/read.md). Preview only; no task was assessed.")
-        lastStatus = "Demo hint shown; no task assessed"
+        showHint(ctx, "Demo — read can inspect known files directly.\nExample feature: tool: read (omp://tools/read.md).\nPreview only; nothing executed.")
+        lastStatus = "Demo hint shown; nothing executed"
         return
       }
 
@@ -228,7 +209,7 @@ export default function trainer(pi) {
         enabled = action === "on"
         pi.appendEntry(STATE_TYPE, { enabled })
         if (enabled) {
-          lastStatus = "Waiting for completed work"
+          lastStatus = "Waiting for a user prompt"
         } else {
           lastStatus = "Disabled"
         }
@@ -238,7 +219,7 @@ export default function trainer(pi) {
 
       try {
         const verbosity = readVerbosity(agentDir(ctx))
-        ctx.ui.notify(`Trainer 0.6.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down across all terminals in this OMP profile. Uses the current model for bounded, tool-free side turns; never blocks or resumes work.`, "info")
+        ctx.ui.notify(`Trainer 0.7.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
       } catch (error) {
         ctx.ui.notify(`Trainer ${state}. Global verbosity unavailable: ${String(error?.message ?? error).slice(0, 300)}`, "warning")
       }
@@ -256,20 +237,9 @@ export default function trainer(pi) {
   })
 
   for (const event of ["session_start", "session_switch", "session_branch", "session_tree"]) pi.on(event, restore)
-  pi.on("agent_start", (_event, ctx) => cancel(ctx))
-  pi.on("input", (event, ctx) => {
-    const command = event.text?.trim()
-    if (command !== "/trainer" && command !== "/trainer status" && command !== "/trainer verbosity") cancel(ctx)
-  })
+  pi.on("agent_start", cancelRequest)
+  pi.on("input", showPromptHint)
   pi.on("session_shutdown", (_event, ctx) => cancel(ctx))
-  // Observe this boundary synchronously; never return a stop decision or await coaching here.
-  pi.on("session_stop", (_event, ctx) => {
-    if (ctx.agent?.kind === "main") stopObserved = true
-  })
-  pi.on("agent_end", (_event, ctx) => {
-    if (!stopObserved || pending) return
-    stopObserved = false
-    const expectedGeneration = generation
-    ctx.setTimeout(() => evaluate(ctx, expectedGeneration), 50)
-  })
 }
+
+export default trainer

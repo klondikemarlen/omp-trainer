@@ -4,8 +4,6 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test, { afterEach } from "node:test"
 
-import { EVALUATION_TYPE, STATE_TYPE } from "../lib/evidence.js"
-
 import trainer from "../index.js"
 
 const directories = new Set()
@@ -19,14 +17,11 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
   directories.add(agentDir)
   const handlers = new Map()
   const commands = new Map()
-  const timers = new Set()
   const notifications = []
   const widgets = new Map()
-  const hintPresentations = []
-  const entries = [
-    { type: "message", id: "human", message: { role: "user", content: "I manually copied both known files. No edits without approval." } },
-    { type: "message", id: "final", message: { role: "assistant", stopReason: "stop", content: "The requested comparison is complete." } },
-  ]
+  const entries = []
+  const features = []
+  const timers = new Set()
   const ctx = {
     agent: { kind: "main" },
     agentDir,
@@ -34,7 +29,7 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
     isIdle: () => true,
     hasPendingMessages: () => false,
     getAsyncJobSnapshot: () => ({ running: [], delivery: { queued: 0, delivering: false } }),
-    sessionManager: { getBranch: () => entries, getEntries: () => entries, getSessionId: () => "session" },
+    sessionManager: { getBranch: () => entries, getSessionId: () => "session" },
     ui: {
       notify: message => notifications.push(message),
       setWidget: (key, content) => {
@@ -44,7 +39,6 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
         }
 
         widgets.set(key, content)
-        if (key === "omp-trainer.hint") hintPresentations.push(content)
       },
     },
     setTimeout: (callback, delay) => { const timer = { callback, delay }; timers.add(timer); return timer },
@@ -55,39 +49,226 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
     setLabel() {},
     on: (event, handler) => handlers.set(event, handler),
     registerCommand: (name, command) => commands.set(name, command),
-    getActiveTools: () => ["read"],
-    getCommands: () => [],
+    getActiveTools: () => ["read", "grep", "glob", "task"],
+    getCommands: () => [...features, ...[...commands].map(([name, command]) => ({ name, description: command.description, source: "extension" }))],
     appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }),
   })
   async function emit(name, event = {}) { return handlers.get(name)?.(event, ctx) }
-  async function settle() {
-    await emit("session_stop")
-    await emit("agent_end")
-    const timer = [...timers].find(item => item.delay === 50)
-    if (timer) { timers.delete(timer); await timer.callback() }
-  }
-  return { ctx, agentDir, entries, notifications, widgets, hintPresentations, commands, emit, settle }
+  async function input(text, source = "interactive") { return emit("input", { text, source }) }
+  return { ctx, agentDir, entries, features, notifications, widgets, commands, emit, input }
 }
 
-function usefulReply() {
-  return { replyText: JSON.stringify({
-    completed: true,
-    completionEvidence: { id: "final", quote: "The requested comparison is complete." },
-    recommendation: {
-      kind: "alternative",
-      capabilityId: "tool:read",
-      userEvidence: [{ id: "human", quote: "I manually copied both known files." }],
-      reason: "reading both files directly instead of copying their contents.",
-      shorterPrompt: "Compare both known files directly. No edits without approval.",
-      preservesInputsAndApprovals: true,
-      agentFailure: false,
-    },
-  }) }
-}
-
-test("when unrelated history exceeds the request budget, completed work still records a coaching assessment", async () => {
+test("when a user submits the first prompt without an inference API, a related hint appears immediately", async () => {
   // Arrange
-  const host = runtime(async () => usefulReply())
+  const host = runtime(undefined)
+  // Act
+  await host.input("Read alpha.txt without changing it.")
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: read/)
+})
+
+test("when primary and background work remain active, a queued user prompt still gets a hint", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.isIdle = () => false
+  host.ctx.hasPendingMessages = () => true
+  host.ctx.getAsyncJobSnapshot = () => ({ running: [{ id: "work" }], delivery: { queued: 1, delivering: true } })
+  // Act
+  await host.input("Find project files named alpha.", "rpc")
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: glob/)
+})
+
+test("when the prompt has no related feature, a labelled random reminder is shown instead of silence", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  // Act
+  await host.input("Good morning.")
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Random feature reminder:/)
+})
+
+test("when the primary starts and finishes work, the current prompt hint remains visible", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  await host.input("Read alpha.txt.")
+  const hint = host.widgets.get("omp-trainer.hint")
+  // Act
+  await host.emit("agent_start")
+  await host.emit("session_stop")
+  await host.emit("agent_end")
+  // Assert
+  assert.deepEqual(host.widgets.get("omp-trainer.hint"), hint)
+})
+
+test("when the next prompt is submitted, its feature replaces the previous prompt hint", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  await host.input("Read alpha.txt.")
+  // Act
+  await host.input("Find project files named beta.")
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: glob/)
+})
+
+test("when an image-only prompt is submitted, a passive reminder still appears", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  // Act
+  await host.emit("input", { text: "", images: [{ type: "image" }], source: "interactive" })
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Random feature reminder:/)
+})
+
+test("when a skill invocation is submitted, its raw registered name can select the related feature", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.features.push({ name: "skill:simplify", source: "skill", description: "Improve readability without changing behavior." })
+  // Act
+  await host.input("/skill:simplify src/example.js")
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: skill: \/skill:simplify/)
+})
+
+test("when input is synthetic rather than interactive or RPC, it does not rotate the user's hint", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  await host.input("Read alpha.txt.")
+  const hint = host.widgets.get("omp-trainer.hint")
+  // Act
+  await host.input("Find project files.", "extension")
+  // Assert
+  assert.deepEqual(host.widgets.get("omp-trainer.hint"), hint)
+})
+
+test("when the agent is a subagent, user input cannot create a main-session learning hint", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.agent = { kind: "sub" }
+  // Act
+  await host.input("Read alpha.txt.")
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when UI is unavailable, the input event does not claim to display a hint", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.hasUI = false
+  // Act
+  await host.input("Read alpha.txt.")
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when a disabled session resumes, subsequent prompts remain silent", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.entries.push({ type: "custom", customType: "omp-trainer.state", data: { enabled: false, mode: "verbose" } })
+  await host.emit("session_start")
+  // Act
+  await host.input("Read alpha.txt.")
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when Trainer is turned off, the visible hint is cleared and the next prompt cannot replace it", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  await host.input("Read alpha.txt.")
+  // Act
+  await host.commands.get("trainer").handler("off", host.ctx)
+  await host.input("Find project files.")
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when status and verbosity are queried, the current passive hint is preserved", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  await host.input("Read alpha.txt.")
+  const hint = host.widgets.get("omp-trainer.hint")
+  // Act
+  await host.input("/trainer status")
+  await host.commands.get("trainer").handler("status", host.ctx)
+  await host.input("/trainer verbosity")
+  await host.commands.get("trainer").handler("verbosity", host.ctx)
+  // Assert
+  assert.deepEqual(host.widgets.get("omp-trainer.hint"), hint)
+})
+
+test("when the session changes, the previous session's feature hint is not replayed", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  await host.input("Read alpha.txt.")
+  // Act
+  await host.emit("session_switch")
+  // Assert
+  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+})
+
+test("when another terminal lowers verbosity, the next prompt still gets a compact hint", async () => {
+  // Arrange
+  const controller = runtime(undefined)
+  await controller.commands.get("trainer").handler("verbosity up", controller.ctx)
+  const observer = runtime(undefined, controller.agentDir)
+  await observer.input("Read alpha.txt.")
+  // Act
+  await controller.commands.get("trainer").handler("verbosity down", controller.ctx)
+  await observer.input("Read beta.txt.")
+  // Assert
+  assert.deepEqual(observer.widgets.get("omp-trainer.hint"), ["Trainer hint: Related feature: tool: read (omp://tools/read.md)."])
+})
+
+test("when a long prompt arrives with an oversized catalog, passive selection is not skipped by inference limits", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.features.push({ name: "huge-command", description: "x".repeat(25_000), source: "extension" })
+  // Act
+  await host.input("Read alpha.txt. " + "x".repeat(32_000))
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: read/)
+})
+
+test("when new user input arrives during recall, the late recall result cannot overwrite its passive hint", async () => {
+  // Arrange
+  let finish
+  const host = runtime(() => new Promise(resolve => { finish = resolve }))
+  const recalling = host.commands.get("trainer").handler("recall Read alpha.txt without edits.", host.ctx)
+  await new Promise(resolve => setImmediate(resolve))
+  // Act
+  await host.input("Find project files named beta.")
+  finish({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Inspect a known file.", preservesIntent: true }) })
+  await recalling
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: glob/)
+})
+
+test("when explicit recall is used while passive hints are disabled, it does not enable the session", async () => {
+  // Arrange
+  const host = runtime(async () => ({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Inspect a known file.", preservesIntent: true }) }))
+  await host.commands.get("trainer").handler("off", host.ctx)
+  // Act
+  await host.commands.get("trainer").handler("recall Read alpha.txt without edits.", host.ctx)
+  await host.commands.get("trainer").handler("status", host.ctx)
+  // Assert
+  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
+})
+
+test("when global settings are invalid, the prompt shows an availability diagnostic rather than unexplained silence", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  mkdirSync(join(host.agentDir, "trainer"))
+  writeFileSync(join(host.agentDir, "trainer", "config.json"), JSON.stringify({ verbosity: "loud" }))
+  // Act
+  await host.input("Read alpha.txt.")
+  // Assert
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Trainer status: Unavailable: Global Trainer verbosity/)
+})
+
+test("when explicit recall has oversized unrelated history, bounded recall still produces its capability result", async () => {
+  // Arrange
+  const host = runtime(undefined)
   host.ctx.runEphemeralTurn = async options => {
     const messages = [
       { role: "custom", content: "Unrelated prior output: " + "x".repeat(160_000) },
@@ -99,353 +280,23 @@ test("when unrelated history exceeds the request budget, completed work still re
       throw new Error("Ephemeral turn context exceeds the configured limit")
     }
 
-    return usefulReply()
+    return { replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Inspect a known file.", preservesIntent: true }) }
   }
   // Act
-  await host.settle()
+  await host.commands.get("trainer").handler("recall Read alpha.txt without edits.", host.ctx)
   // Assert
-  const assessment = host.entries.findLast(entry => entry.customType === EVALUATION_TYPE)
-  assert.deepEqual(assessment?.data, { key: "final", completed: true, shown: true })
+  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Trainer recall: tool: read/)
 })
 
-test("when completed work is replayed after state reconstruction, the original coaching appears only once", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  // Act
-  await host.settle()
-  await host.emit("session_start")
-  await host.settle()
-  // Assert
-  assert.equal(host.hintPresentations.length, 1)
-})
-
-test("when an intermediate yield has no stop boundary, no coaching is shown", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  // Act
-  await host.emit("agent_end")
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when a background job still owns work, no coaching is shown", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  host.ctx.getAsyncJobSnapshot = () => ({ running: [{ id: "job" }], delivery: { queued: 0 } })
-  // Act
-  await host.settle()
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when coaching is disabled and the session resumes, no coaching is shown", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  // Act
-  await host.commands.get("trainer").handler("off", host.ctx)
-  await host.emit("session_start")
-  await host.settle()
-  // Assert
-  assert.deepEqual(host.entries.filter(entry => entry.customType === EVALUATION_TYPE), [])
-})
-
-test("when a new task starts during evaluation, stale coaching is discarded", async () => {
-  // Arrange
-  let finish
-  const host = runtime(() => new Promise(resolve => { finish = resolve }))
-  // Act
-  const settling = host.settle()
-  await new Promise(resolve => setImmediate(resolve))
-  await host.emit("agent_start")
-  finish(usefulReply())
-  await settling
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when inference fails, the completed primary work stays closed with no coaching", async () => {
-  // Arrange
-  const host = runtime(async () => { throw new Error("Provider unavailable") })
-  // Act
-  await host.settle()
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when existing disabled state is reconstructed, status reports the persisted control", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  host.entries.push({ type: "custom", customType: STATE_TYPE, data: { enabled: false } })
-  // Act
-  await host.emit("session_start")
-  await host.commands.get("trainer").handler("status", host.ctx)
-  // Assert
-  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
-})
-
-test("when the next task starts, the previous coaching hint disappears", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  await host.settle()
-  // Act
-  await host.emit("agent_start")
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when Trainer is disabled, its visible coaching hint disappears", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  await host.settle()
-  // Act
-  await host.commands.get("trainer").handler("off", host.ctx)
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when the user queries default status, the coaching hint remains visible", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  await host.settle()
-  // Act
-  await host.emit("input", { text: "/trainer" })
-  await host.commands.get("trainer").handler("", host.ctx)
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), true)
-})
-
-test("when the user switches sessions, the previous session's hint disappears", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  await host.settle()
-  // Act
-  await host.emit("session_switch")
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when the user requests a demo without an inference API, the hint is visibly marked as a preview", async () => {
-  // Arrange
-  const host = runtime(undefined)
-  // Act
-  await host.commands.get("trainer").handler("demo", host.ctx)
-  // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /^Trainer hint: Demo/)
-})
-
-test("when a demo is shown, no completed-work assessment is recorded", async () => {
-  // Arrange
-  const host = runtime(undefined)
-  // Act
-  await host.commands.get("trainer").handler("demo", host.ctx)
-  // Assert
-  const evaluations = host.entries.filter(entry => entry.customType === EVALUATION_TYPE)
-  assert.deepEqual(evaluations, [])
-})
-
-test("when disabled coaching is previewed, automatic coaching stays disabled", async () => {
+test("when a disabled session requests a demo, the preview does not enable future prompt hints", async () => {
   // Arrange
   const host = runtime(undefined)
   await host.commands.get("trainer").handler("off", host.ctx)
-  // Act
   await host.commands.get("trainer").handler("demo", host.ctx)
-  await host.commands.get("trainer").handler("status", host.ctx)
-  // Assert
-  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
-})
-
-test("when a pending assessment finishes after a demo, the real result cannot overwrite the preview", async () => {
-  // Arrange
-  let finish
-  const host = runtime(() => new Promise(resolve => { finish = resolve }))
-  const settling = host.settle()
-  await new Promise(resolve => setImmediate(resolve))
   // Act
-  await host.commands.get("trainer").handler("demo", host.ctx)
-  finish(usefulReply())
-  await settling
-  // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /^Trainer hint: Demo/)
-})
-
-test("when recall is requested while automatic coaching is off, the setting stays off", async () => {
-  // Arrange
-  const host = runtime(async () => ({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Read known files directly.", preservesIntent: true }) }))
-  await host.commands.get("trainer").handler("off", host.ctx)
-  // Act
-  await host.commands.get("trainer").handler("recall Read both known files without edits.", host.ctx)
-  await host.commands.get("trainer").handler("status", host.ctx)
-  // Assert
-  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\. Recall shown; nothing executed\./)
-})
-
-test("when recall has no matching capability, it does not mark the task as assessed", async () => {
-  // Arrange
-  const host = runtime(async () => ({ replyText: "null" }))
-  // Act
-  await host.commands.get("trainer").handler("recall Use the unavailable skill to publish a book.", host.ctx)
-  // Assert
-  assert.deepEqual(host.entries.filter(entry => entry.customType === EVALUATION_TYPE), [])
-})
-
-test("when new work starts during recall, its late result stays hidden", async () => {
-  // Arrange
-  let finish
-  const host = runtime(() => new Promise(resolve => { finish = resolve }))
-  const recalling = host.commands.get("trainer").handler("recall Read both known files.", host.ctx)
-  // Act
-  await host.emit("input", { text: "Start new work" })
-  finish({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Read files directly.", preservesIntent: true }) })
-  await recalling
+  await host.input("Read alpha.txt.")
   // Assert
   assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when verbose assessment has no supported tip, the user still sees that completed work was checked", async () => {
-  // Arrange
-  const reply = JSON.parse(usefulReply().replyText)
-  reply.recommendation = null
-  const host = runtime(async () => ({ replyText: JSON.stringify(reply) }))
-  await host.commands.get("trainer").handler("verbosity up", host.ctx)
-  // Act
-  await host.settle()
-  // Assert
-  assert.match(host.notifications.at(-1), /Assessed completed work: no supported coaching opportunity/)
-})
-
-test("when quiet assessment has no supported tip, it produces no automatic notification", async () => {
-  // Arrange
-  const reply = JSON.parse(usefulReply().replyText)
-  reply.recommendation = null
-  const host = runtime(async () => ({ replyText: JSON.stringify(reply) }))
-  await host.commands.get("trainer").handler("verbosity down", host.ctx)
-  const beforeAssessment = [...host.notifications]
-  // Act
-  await host.settle()
-  // Assert
-  assert.deepEqual(host.notifications, beforeAssessment)
-})
-
-test("when an old session resumes, historical verbosity cannot override the shared quiet setting", async () => {
-  // Arrange
-  const reply = JSON.parse(usefulReply().replyText)
-  reply.recommendation = null
-  const host = runtime(async () => ({ replyText: JSON.stringify(reply) }))
-  host.entries.unshift({ type: "custom", customType: STATE_TYPE, data: { enabled: true, mode: "verbose" } })
-  await host.commands.get("trainer").handler("verbosity down", host.ctx)
-  const beforeAssessment = [...host.notifications]
-  // Act
-  await host.emit("session_start")
-  await host.settle()
-  // Assert
-  assert.deepEqual(host.notifications, beforeAssessment)
-})
-
-test("when disabled Trainer changes verbosity, automatic coaching remains disabled", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  await host.commands.get("trainer").handler("off", host.ctx)
-  // Act
-  await host.commands.get("trainer").handler("verbosity down", host.ctx)
-  await host.commands.get("trainer").handler("verbosity up", host.ctx)
-  await host.emit("session_start")
-  await host.commands.get("trainer").handler("status", host.ctx)
-  // Assert
-  assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
-})
-
-test("when verbosity changes during assessment, the cancelled result cannot display stale coaching", async () => {
-  // Arrange
-  let finish
-  const host = runtime(() => new Promise(resolve => { finish = resolve }))
-  const settling = host.settle()
-  await new Promise(resolve => setImmediate(resolve))
-  // Act
-  await host.commands.get("trainer").handler("verbosity down", host.ctx)
-  finish(usefulReply())
-  await settling
-  // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when verbose assessment fails, the user sees the failure instead of unexplained silence", async () => {
-  // Arrange
-  const host = runtime(async () => { throw new Error("Provider unavailable") })
-  await host.commands.get("trainer").handler("verbosity up", host.ctx)
-  // Act
-  await host.settle()
-  // Assert
-  assert.match(host.notifications.at(-1), /Unavailable: Provider unavailable/)
-})
-
-test("when completed-work evidence exceeds the limit, verbose mode explains the skip", async () => {
-  // Arrange
-  const host = runtime(async () => usefulReply())
-  host.entries[0].message.content = "x".repeat(24_001)
-  await host.commands.get("trainer").handler("verbosity up", host.ctx)
-  // Act
-  await host.settle()
-  // Assert
-  assert.match(host.notifications.at(-1), /Skipped: no bounded completed-work candidate/)
-})
-
-test("when another running session turns verbosity up, completed assessments become visible here", async () => {
-  // Arrange
-  const controller = runtime(undefined)
-  await controller.commands.get("trainer").handler("verbosity down", controller.ctx)
-  const reply = JSON.parse(usefulReply().replyText)
-  reply.recommendation = null
-  const observer = runtime(async () => ({ replyText: JSON.stringify(reply) }), controller.agentDir)
-  await observer.emit("session_start")
-  // Act
-  await controller.commands.get("trainer").handler("verbosity up", controller.ctx)
-  await observer.settle()
-  // Assert
-  assert.match(observer.notifications.at(-1), /Assessed completed work: no supported coaching opportunity/)
-})
-
-test("when another running session turns verbosity down, automatic assessment feedback stops here", async () => {
-  // Arrange
-  const controller = runtime(undefined)
-  await controller.commands.get("trainer").handler("verbosity up", controller.ctx)
-  const reply = JSON.parse(usefulReply().replyText)
-  reply.recommendation = null
-  const observer = runtime(async () => ({ replyText: JSON.stringify(reply) }), controller.agentDir)
-  await observer.emit("session_start")
-  // Act
-  await controller.commands.get("trainer").handler("verbosity down", controller.ctx)
-  await observer.settle()
-  // Assert
-  assert.deepEqual(observer.notifications, [])
-})
-
-test("when another terminal lowers verbosity during inference, a pending discovery tip is suppressed", async () => {
-  // Arrange
-  const controller = runtime(undefined)
-  await controller.commands.get("trainer").handler("verbosity up", controller.ctx)
-  let finish
-  const observer = runtime(() => new Promise(resolve => { finish = resolve }), controller.agentDir)
-  const reply = JSON.parse(usefulReply().replyText)
-  reply.recommendation.kind = "discovery"
-  const settling = observer.settle()
-  await new Promise(resolve => setImmediate(resolve))
-  // Act
-  await controller.commands.get("trainer").handler("verbosity down", controller.ctx)
-  finish({ replyText: JSON.stringify(reply) })
-  await settling
-  // Assert
-  assert.equal(observer.widgets.has("omp-trainer.hint"), false)
-})
-
-test("when global settings are malformed, status reports the problem instead of silently choosing verbose", async () => {
-  // Arrange
-  const host = runtime(undefined)
-  mkdirSync(join(host.agentDir, "trainer"))
-  writeFileSync(join(host.agentDir, "trainer", "config.json"), JSON.stringify({ verbosity: "loud" }))
-  // Act
-  await host.commands.get("trainer").handler("status", host.ctx)
-  // Assert
-  assert.match(host.notifications.at(-1), /Global verbosity unavailable/)
 })
 
 test("when global verbosity cannot be written, the command reports failure instead of claiming it was saved", async () => {
