@@ -3,7 +3,7 @@ A passive feature reminder on every submitted prompt: related when feature keywo
 
 ## Install and Control
 
-Requires OMP's main-session external `input` hook, active tool/command catalog, and below-editor widgets (exercised with OMP 18.12.6). Explicit recall additionally uses `runEphemeralTurn`, context transforms, and managed timers.
+Requires OMP's main-session external `input` hook, active tool/command catalog, and keyed footer statuses (exercised with OMP 18.12.6). Explicit recall additionally uses `runEphemeralTurn`, context transforms, and managed timers.
 
 ```sh
 omp plugin install github:klondikemarlen/omp-trainer
@@ -12,7 +12,7 @@ omp plugin install github:klondikemarlen/omp-trainer
 Start a **new OMP process** after installation to load this release. Trainer is enabled by default; global verbosity starts at **verbose** until changed.
 
 - `/trainer status` — show the loaded version, session enabled state, global verbosity, and latest hint or recall outcome.
-- `/trainer demo` — immediately show a clearly labelled preview through the real below-editor hint widget, without model inference.
+- `/trainer demo` — immediately show a clearly labelled preview through the real footer card, without model inference.
 - `/trainer recall <request>` — find one relevant currently available tool, command, or skill without executing the request.
 - `/trainer verbosity` — report the shared verbosity setting.
 - `/trainer verbosity up` — select verbose coaching across all projects and running terminals in this OMP profile.
@@ -28,7 +28,7 @@ The two levels are `quiet` and `verbose`: `up` selects detailed cards, `down` se
 
 The on/off choice remains **session-local**, is saved on the current branch, and is restored on resume; a saved choice overrides `OMP_TRAINER_ENABLED`. Changing global verbosity does not enable a disabled session. Global verbosity replaces the old `/trainer verbose`, `/trainer quiet`, and `OMP_TRAINER_MODE` interfaces; historical session `mode` metadata no longer overrides it. All current command arguments support native autocomplete.
 
-Use `/trainer demo` to preview the same below-editor renderer immediately, without submitting work or requesting a model. It is explicitly marked as a preview, works while passive hints are off without enabling them, and cancels pending recall so a late result cannot overwrite it.
+Use `/trainer demo` to preview the same footer card immediately, without submitting work or requesting a model. It is explicitly marked as a preview, works while passive hints are off without enabling them, and cancels pending recall so a late result cannot overwrite it.
 
 ## Turn Coaching Up or Down
 
@@ -41,7 +41,7 @@ Use `/trainer verbosity down` when the detailed cards are distracting, `/trainer
 
 ## Find and Remember Capabilities
 
-Use `/trainer recall` with the request you would otherwise retrieve from clipboard history. Trainer asks the current configured model to match it to one live capability, then shows a labelled `Trainer recall:` below the editor. The exact registered invocation and your original request are displayed together: no model rewrite can silently remove an input, approval, or completion requirement. Recall never executes that invocation.
+Use `/trainer recall` with the request you would otherwise retrieve from clipboard history. Trainer asks the current configured model to match it to one live capability, then shows a labelled `Trainer recall` footer card. The exact registered invocation and your original request are supplied together: no model rewrite can silently remove an input, approval, or completion requirement. Recall never executes that invocation.
 
 For example:
 
@@ -75,10 +75,14 @@ Selection is deliberately simple and model-free:
 
 For example:
 
-> Trainer hint: Related feature: tool: read (omp://tools/read.md).
+> --- Trainer hint -----------------------
+> Related feature: tool: read (omp://tools/read.md).
 > Read file contents directly
+> ----------------------------------------
 
-The card stays visible during agent start, streaming, completion, and composing the next request. The next submitted prompt replaces it. Automatic hints use only the existing below-editor location, alongside OMP's instance/development/cwd information; they are not also emitted as notifications.
+The card stays visible during agent start, streaming, completion, and composing the next request. The next submitted prompt replaces it. Trainer appears **below the instance, development-time, and cwd/worktree messages**, between dashed separators, with no duplicate notification. Demo, recall, and availability diagnostics use the same card.
+
+OMP 18.12.6 renders below-editor widgets above footer statuses, so Trainer uses its own lexically last `zz-omp-trainer.hint.*` status rows instead. Other extensions retain ownership of their statuses and can refresh them without moving Trainer above them. Cards are bounded to ten rows, including borders and an omission notice when needed; OMP applies terminal-width truncation to each row.
 
 `/trainer`, `/trainer status`, and `/trainer verbosity` preserve the card. Trainer's own commands do not trigger a second passive reminder: demo, recall, disable, and verbosity changes own their display behavior. Session changes and shutdown clear the card without replaying it on resume. When no other feature catalog is available, Trainer can still remind you about its own status control.
 
@@ -90,7 +94,7 @@ These are passive learning cards, **not instructions to the primary agent**, cor
 
 Automatic hints inspect only the submitted text for keyword selection and the live capability catalog. They do not scan conversation history, wait for stop hooks, infer task completion, or request an assessment. Long prompts and catalogs are not rejected by inference evidence limits. Feature descriptions are condensed to a single line of at most 240 characters in detailed cards; user requests are not rewritten.
 
-Only the session enabled flag is appended as Trainer state metadata. The shared settings file stores only verbosity. Trainer retains the previous feature identifier in memory to avoid consecutive random repeats, but stores no prompt or hint archive. Historical completion-assessment markers are no longer read or written. The widget is not injected into primary/advisor model context.
+Only the session enabled flag is appended as Trainer state metadata. The shared settings file stores only verbosity. Trainer retains the previous feature identifier in memory to avoid consecutive random repeats, but stores no prompt or hint archive. Historical completion-assessment markers are no longer read or written. The footer card is not injected into primary/advisor model context.
 
 **Explicit recall alone uses inference:** at most 8,000 UTF-8 bytes of request text and a 24,000-byte available-capability catalog, without silent request truncation. It uses the session's current provider/model with tools disabled and a 45-second cancellation deadline. The whole serialized request is capped at 128,000 bytes, including inherited system context and other transforms. It consumes that provider's quota; no model route is changed.
 
@@ -110,7 +114,7 @@ omp --no-extensions --extension ./index.js
 
 The Node suite covers feature-name/description matching, random fallback and immediate-repeat avoidance, active capability filtering, immediate first/busy/image/skill input, hint persistence through agent lifecycle, disabled-state restoration, global detail changes, and explicit recall validation/cancellation/context isolation. Completion-evidence tests were removed with the obsolete automatic evaluator.
 
-Native QA must exercise a first prompt and confirm its widget appears **before `agent_start`**, then stays visible through the actual primary turn and while composing. Verify both a related request and a random reminder, plus steering/follow-up submission while work is active. Backend delivery/replay and synthetic updates must not rotate the card again. Observe that ordinary prompt hints request no ephemeral turn.
+Native QA must exercise a first prompt and confirm its card appears **before `agent_start`**, then stays visible through the actual primary turn and while composing. Verify the card follows instance, development-time, and worktree status rows, including after those statuses refresh, at wide and narrow terminal widths. Verify both a related request and a random reminder, plus steering/follow-up submission while work is active. Backend delivery/replay and synthetic updates must not rotate the card again. Observe that ordinary prompt hints request no ephemeral turn.
 
 With two processes already running in different projects, change global verbosity in one and confirm the next prompt in the other gets detailed or compact output as selected, never silence solely because it is quiet. Preserve disabled sessions, status-query behavior, session switching, and native control autocomplete. Use an isolated agent-directory adapter for source QA so shared-preference checks do not change personal settings.
 

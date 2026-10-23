@@ -3,7 +3,8 @@ import { promptHint } from "./lib/prompt-hint.js"
 import { recallPrompt, validateRecall } from "./lib/recall-prompt.js"
 import { readVerbosity, writeVerbosity } from "./lib/settings.js"
 
-const HINT_WIDGET = "omp-trainer.hint"
+// Status rows sort by key; keep the card after instance, project-time, and worktree statuses.
+const HINT_STATUS_KEYS = Array.from({ length: 10 }, (_value, index) => `zz-omp-trainer.hint.${String(index).padStart(2, "0")}`)
 const STATE_TYPE = "omp-trainer.state"
 
 function textContent(content) {
@@ -26,7 +27,11 @@ export function trainer(pi) {
   }
 
   function showHint(ctx, message, label = "Trainer hint") {
-    ctx.ui.setWidget(HINT_WIDGET, `${label}: ${message}`.split("\n"), { placement: "belowEditor" })
+    let lines = message.split("\n")
+    if (lines.length > 8) lines = [...lines.slice(0, 7), "… additional hint lines omitted"]
+
+    const card = [`--- ${label} `.padEnd(40, "-"), ...lines, "-".repeat(40)]
+    for (const [index, key] of HINT_STATUS_KEYS.entries()) ctx.ui.setStatus(key, card[index])
   }
 
   function cancelRequest() {
@@ -37,7 +42,9 @@ export function trainer(pi) {
 
   function cancel(ctx) {
     cancelRequest()
-    if (ctx.agent?.kind === "main") ctx.ui.setWidget(HINT_WIDGET, undefined)
+    if (ctx.agent?.kind === "main") {
+      for (const key of HINT_STATUS_KEYS) ctx.ui.setStatus(key, undefined)
+    }
   }
 
   function restore(_event, ctx) {
@@ -219,7 +226,7 @@ export function trainer(pi) {
 
       try {
         const verbosity = readVerbosity(agentDir(ctx))
-        ctx.ui.notify(`Trainer 0.7.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
+        ctx.ui.notify(`Trainer 0.7.1: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
       } catch (error) {
         ctx.ui.notify(`Trainer ${state}. Global verbosity unavailable: ${String(error?.message ?? error).slice(0, 300)}`, "warning")
       }

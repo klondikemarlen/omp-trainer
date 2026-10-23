@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+### Changed
+- Move Trainer below instance, development-time, and cwd/worktree messages using its own footer status rows.
+- Frame passive hints, demo, recall, and availability diagnostics with dashed separators; preserve other extensions' statuses when clearing the card.
+
 ## 0.7.0
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "omp-trainer",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Per-prompt passive feature hints and on-demand installed-capability recall for OMP.",
   "type": "module",
   "repository": {
