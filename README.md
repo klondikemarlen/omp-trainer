@@ -1,9 +1,9 @@
 # omp-trainer
-Post-completion coaching and on-demand capability recall that help OMP users achieve the same outcomes with less prompting and effort.
+A passive feature reminder on every submitted prompt: related when feature keywords fit, otherwise random. Explicit capability recall remains available when you want model-assisted help finding a tool, command, or skill.
 
 ## Install and Control
 
-Requires OMP with `runEphemeralTurn`, context transforms, managed timers, and the main-session `session_stop` lifecycle (exercised with OMP 18.12.6).
+Requires OMP's main-session external `input` hook, active tool/command catalog, and below-editor widgets (exercised with OMP 18.12.6). Explicit recall additionally uses `runEphemeralTurn`, context transforms, and managed timers.
 
 ```sh
 omp plugin install github:klondikemarlen/omp-trainer
@@ -11,7 +11,7 @@ omp plugin install github:klondikemarlen/omp-trainer
 
 Start a **new OMP process** after installation to load this release. Trainer is enabled by default; global verbosity starts at **verbose** until changed.
 
-- `/trainer status` — show the loaded version, session enabled state, global verbosity, and latest evaluation outcome.
+- `/trainer status` — show the loaded version, session enabled state, global verbosity, and latest hint or recall outcome.
 - `/trainer demo` — immediately show a clearly labelled preview through the real below-editor hint widget, without model inference.
 - `/trainer recall <request>` — find one relevant currently available tool, command, or skill without executing the request.
 - `/trainer verbosity` — report the shared verbosity setting.
@@ -22,24 +22,22 @@ Start a **new OMP process** after installation to load this release. Trainer is 
 - `OMP_TRAINER_ENABLED=0 omp` — default new sessions to disabled.
 - `omp plugin disable omp-trainer` — disable the installed plugin entirely.
 
-Verbosity is saved in `trainer/config.json` under the active OMP agent directory (normally `~/.omp/agent/trainer/config.json`). Every terminal using that profile reads the same setting, regardless of project or session. Raising verbosity in one terminal applies to other already-running processes at their next Trainer interaction or assessment; lowering it is also checked before an in-flight recommendation or notification is presented. There is no settings watcher, polling, or restart requirement after a verbosity change. Separate OMP profiles keep separate settings.
+Verbosity is saved in `trainer/config.json` under the active OMP agent directory (normally `~/.omp/agent/trainer/config.json`). Every terminal using that profile reads the same setting, regardless of project or session. Changes apply to its next automatic hint or status query without polling or restarting; separate OMP profiles keep separate settings. Verbosity controls card detail, not frequency: both levels show a hint on every supported prompt.
 
-The two levels are `quiet` and `verbose`: `up` selects verbose, `down` selects quiet, and repeating either stays at that level. Writes atomically replace the private settings file. Invalid settings or failed writes produce a diagnostic rather than silently switching to louder coaching or claiming a change was saved.
+The two levels are `quiet` and `verbose`: `up` selects detailed cards, `down` selects compact cards, and repeating either stays at that level. Writes atomically replace the private settings file. Invalid settings or failed writes produce a diagnostic rather than silently switching to louder output or claiming a change was saved.
 
 The on/off choice remains **session-local**, is saved on the current branch, and is restored on resume; a saved choice overrides `OMP_TRAINER_ENABLED`. Changing global verbosity does not enable a disabled session. Global verbosity replaces the old `/trainer verbose`, `/trainer quiet`, and `OMP_TRAINER_MODE` interfaces; historical session `mode` metadata no longer overrides it. All current command arguments support native autocomplete.
 
-Use `/trainer demo` when you want the hint to actually pop up without waiting for an automatic coaching opportunity. It is explicitly marked as a preview, not an assessment of your current work; it records no evaluation marker and starts no primary turn. It also works while automatic coaching is off without enabling it. The demo cancels pending automatic inference so a late result cannot overwrite it, and follows the same hint-clearing rules as normal coaching.
+Use `/trainer demo` to preview the same below-editor renderer immediately, without submitting work or requesting a model. It is explicitly marked as a preview, works while passive hints are off without enabling them, and cancels pending recall so a late result cannot overwrite it.
 
 ## Turn Coaching Up or Down
 
-| Mode | Coaching opportunities | Visible automatic feedback |
+| Level | Every supported prompt | Card detail |
 | --- | --- | --- |
-| `verbose` (default) | One supported lower-effort alternative, or an optional capability reminder grounded in your completed task | A short notification points to a new below-editor hint. Completed assessments with no tip, skipped evidence, unconfirmed completion, and failures are also reported. |
-| `quiet` | Only a concrete, evidence-backed alternative that saves avoidable user effort | A below-editor hint when useful; other outcomes remain available through status. |
+| `verbose` (default) | A related or random feature reminder | Feature category, exact invocation or documented tool citation, and a concise description. |
+| `quiet` | A related or random feature reminder | One compact line identifying the feature and its invocation or citation. |
 
-Verbose mode is useful while finding out whether Trainer helps. It can teach a relevant available tool, command, or skill even when your original request was perfectly reasonable. Discovery hints explain a concrete use for a similar task and are labelled as optional memory aids, not corrections. Trainer still declines generic, unavailable, intent-changing, or unsupported suggestions.
-
-Both modes use the **same existing assessment schedule**: one bounded side turn for each eligible completed-work candidate, not extra turns, polling, or mid-task interruptions. More tips come from allowing relevant discovery, not more model requests. Inference still consumes the current provider's quota. Use `/trainer verbosity down` to reduce coaching across all enabled sessions in this profile, `/trainer verbosity up` to raise it again, or `/trainer off` to stop automatic assessment in the current session.
+Use `/trainer verbosity down` when the detailed cards are distracting, `/trainer verbosity up` to restore descriptions, or `/trainer off` to stop automatic hints in the current session. Global verbosity never enables a deliberately disabled session. Passive hints make **no provider requests** and do not consume model quota.
 
 ## Find and Remember Capabilities
 
@@ -62,35 +60,45 @@ Only skills combine their invocation with your request as a next-time prompt. Or
 | Reassess purpose, knowledge, and implementation to find one justified improvement | `/skill:improve` |
 | Finish the current work, verify delivery, and clean up owned resources safely | `/skill:wrap-up` |
 
-Explicit skill invocation is an optional memory aid: ordinary intent should already select matching workflows. An agent's failure to select one is not a user prompting mistake. Quiet automatic hints cite skills only when concrete avoidable effort exists; verbose mode can instead teach a task-relevant skill as an optional discovery reminder, without treating an omitted slash command as an error.
+Explicit skill invocation is an optional memory aid: ordinary intent should already select matching workflows. An agent's failure to select one is not a user prompting mistake. Automatic hints may remind you about a relevant live skill without asserting that your request needed correcting; unrelated reminders are labelled as random.
 
-Recall works while automatic coaching is off without enabling it or recording a completed-work assessment. Its transient hint follows the same preservation and clearing rules as coaching. To recall a capability again, supply the request again; Trainer saves no hint history and scans no clipboard or cross-session archive. Recall requires idle primary/background work, accepts at most 8,000 UTF-8 bytes without truncation, and uses the same tool-free, 45-second, 128,000-byte request bounds as automatic assessment.
+Recall works while passive hints are off without enabling them. It never executes the supplied request or saves a completed-work assessment. To recall a capability again, supply the request again; Trainer stores no hint history and scans no clipboard or cross-session archive. Recall requires idle primary/background work and uses the inference bounds below. Global verbosity controls automatic feature-card detail, not the verbatim request preserved in an explicit recall result.
 
-## What Triggers Coaching
+## Passive Learning on Every Prompt
 
-Trainer observes `session_stop` without returning a decision, then schedules a managed callback after `agent_end`. Neither event alone proves the user's task is complete. The callback requires the main agent to be idle, no queued messages or outstanding background delivery, no unfinished recorded todos, and a successful terminal assistant answer. It then asks the **current configured model** to assess whether the relevant requested unit is actually complete.
+Trainer observes human input **at submission**, before command/skill expansion and queue insertion. A normal first prompt, a later prompt, or a steering/follow-up submission receives its hint immediately, even while primary or background work is active. Task completion, todos, conversation size, model availability, and successful inference are not prerequisites.
 
-An intermediate result, unfinished task, pending question, approval pause, or ambiguous completion must produce no tip. When completion is confirmed, quiet mode requires a concrete supported improvement; verbose mode also allows a relevant capability reminder. Trainer shows one labelled hint below the editor, alongside OMP's instance/development/cwd information:
+Selection is deliberately simple and model-free:
+- Meaningful feature-name or description keywords can select a **Related feature**. This is a keyword heuristic, not a semantic assessment of your intent.
+- With no supported keyword match, a **Random feature reminder** teaches an available capability without pretending it relates to the task. When alternatives exist, random selection avoids the immediately previous feature; related prompts can still select the same relevant feature.
+- The catalog includes the documented `read`, `grep`, `glob`, and `task` tools when active, plus currently registered commands and skills. Trainer's own controls can also be taught. No unavailable command, undocumented arguments, or rewritten user prompt is invented.
 
-> Trainer hint: You could have done this with less work by asking OMP to read both known files directly.
-> Next time: “Read alpha.txt and beta.txt, add their apple counts, and report the total. No edits without approval.”
-> Available capability: read (omp://tools/read.md).
+For example:
 
-The hint stays visible while you compose your next request or query `/trainer status`, `/trainer verbosity`, or the default `/trainer` action. It clears when you submit new work, start another task, disable/reset Trainer, change global verbosity from this terminal, change sessions, or shut down. Changing verbosity elsewhere governs future output; it does not redraw another terminal's already-visible hint. Hints are not restored on resume. Verbose mode gives a concise notification pointing to the hint rather than repeating its full text; quiet coaching uses only the widget. Status and usage commands still use notifications.
+> Trainer hint: Related feature: tool: read (omp://tools/read.md).
+> Read file contents directly
 
-Lower-effort alternatives must quote real avoidable user effort; discovery reminders must quote the relevant user request. Both cite an active documented tool or a registered command's exact invocation. A suggested example must preserve required inputs, constraints, and approvals. Long prompts, missing slash commands, necessary retries, and the agent's failure to select an existing workflow are not user mistakes. Verbose feedback distinguishes a completed assessment with no tip from a skipped candidate, unconfirmed completion, or failed inference.
+The card stays visible during agent start, streaming, completion, and composing the next request. The next submitted prompt replaces it. Automatic hints use only the existing below-editor location, alongside OMP's instance/development/cwd information; they are not also emitted as notifications.
 
-Trainer never runs the recommendation, blocks completion, starts another primary turn, edits guidance, installs packages, files proposals, or changes models, providers, or advisor cadence. Learner owns learning classification/proposals; shared guidance owners maintain accepted workflows; the primary selects and executes them; Verifier checks requirements. Trainer has no dependency on those plugins.
+`/trainer`, `/trainer status`, and `/trainer verbosity` preserve the card. Trainer's own commands do not trigger a second passive reminder: demo, recall, disable, and verbosity changes own their display behavior. Session changes and shutdown clear the card without replaying it on resume. When no other feature catalog is available, Trainer can still remind you about its own status control.
+
+Supported ingress is main-session Enter/Ctrl+Enter and RPC/RPC UI `prompt`, `steer`, `follow_up`, and `abort_and_prompt`. Image-only input also gets a reminder. Empty drafts, synthetic/advisor traffic, queue replay, and subagent chat do not rotate main-session hints. OMP's synthetic `.`/`c` continuation shortcuts, print/ACP entry paths outside the external-input-hook contract, and hosts without a usable UI do not get a fabricated hint display.
+
+These are passive learning cards, **not instructions to the primary agent**, corrections of user behavior, or permission to execute the advertised feature. Trainer never changes models, providers, advisor cadence, guidance, installed packages, or project files. Learner and Verifier retain their existing roles.
 
 ## Evidence, Privacy, and Limits
 
-Trainer reads only the active session branch after the last assessed completed unit: at most 32 user/assistant text messages and 24,000 UTF-8 bytes. Oversized or insufficient evidence is skipped rather than silently truncated. Agent-attributed synthetic user messages are excluded.
+Automatic hints inspect only the submitted text for keyword selection and the live capability catalog. They do not scan conversation history, wait for stop hooks, infer task completion, or request an assessment. Long prompts and catalogs are not rejected by inference evidence limits. Feature descriptions are condensed to a single line of at most 240 characters in detailed cards; user requests are not rewritten.
 
-The `runEphemeralTurn` API normally includes the current conversation snapshot. Trainer uses OMP's supported context transform to replace conversation messages with its assessment prompt, containing only the bounded evidence and available-capability catalog. This applies only to Trainer's exact in-flight request; primary turns and unrelated side requests keep their history. The **whole serialized request** remains limited to 128,000 bytes, including the inherited system prompt and any other extension transforms. Inference uses the session's configured provider, consumes its quota, disables tools, and is cancelled after 45 seconds or when new work/session changes intervene. Codex ephemeral turns reject output-token caps, so Trainer does not request one or switch models; the host's default reply bound and the cancellation deadline still apply. Unsupported hosts, failed inference, malformed decisions, or exceeded limits produce no suggestion; `/trainer status` exposes the latest diagnostic.
+Only the session enabled flag is appended as Trainer state metadata. The shared settings file stores only verbosity. Trainer retains the previous feature identifier in memory to avoid consecutive random repeats, but stores no prompt or hint archive. Historical completion-assessment markers are no longer read or written. The widget is not injected into primary/advisor model context.
 
-Only the session enabled flag and evaluation markers are appended as namespaced session metadata, outside model-visible conversation. The shared settings file stores only verbosity, not prompts or hints. No private prompt archive or cross-session archive scan exists. Markers prevent replay/resume and advisor/report-only updates from reusing the same completed effort. Coaching is a below-editor widget, not a message to the primary or other advisors.
+**Explicit recall alone uses inference:** at most 8,000 UTF-8 bytes of request text and a 24,000-byte available-capability catalog, without silent request truncation. It uses the session's current provider/model with tools disabled and a 45-second cancellation deadline. The whole serialized request is capped at 128,000 bytes, including inherited system context and other transforms. It consumes that provider's quota; no model route is changed.
 
-If you have never seen coaching, `/trainer demo` checks that the hint renders, while `/trainer status` reports the latest automatic outcome and mode. A working demo does not prove automatic assessment succeeded. In verbose mode, automatic outcomes are also notified: `Assessed completed work: no supported coaching opportunity` means completion was confirmed but no valid tip was returned; `Deferred` means completion was not confirmed; `Skipped` means the work was ineligible; `Unavailable` identifies a failed assessment. Quiet mode deliberately suppresses these notifications. Silence alone does not establish that Trainer is working.
+OMP normally includes conversation history in an ephemeral turn. While the exact recall prompt is pending, Trainer's supported context transform supplies only that bounded prompt as conversation messages. Primary turns and unrelated side requests retain their history. Codex ephemeral turns reject output-token caps, so recall preserves the current route and relies on the context/time bounds and the host's default reply bound.
+
+New human input cancels pending recall before showing its new feature card. Disable/reset, session changes, shutdown, and explicit display-changing controls also cancel pending recall. A late result cannot overwrite a newer hint.
+
+If you still see no output, `/trainer status` reports the loaded version, on/off setting, global detail level, and latest presentation or recall outcome. `/trainer demo` checks the renderer, not automatic prompt coverage. An invalid global setting is shown as an availability diagnostic in the same location rather than unexplained silence.
 
 ## Development and Release
 
@@ -100,15 +108,15 @@ git diff --check
 omp --no-extensions --extension ./index.js
 ```
 
-The Node test suite covers evidence validation, incomplete/no-op outcomes, active-work suppression, replay, disabled-state restoration, late-result cancellation, and hint clearing/preservation. Model judgments additionally require native QA: exercise a useful alternative, an incomplete step, a task with no useful alternative, resume/replay, and an agent workflow-selection failure in a fresh OMP process. Verify the actual hint below the editor, coexistence with existing status information, preservation while composing/checking status, and clearing on new work or disable.
+The Node suite covers feature-name/description matching, random fallback and immediate-repeat avoidance, active capability filtering, immediate first/busy/image/skill input, hint persistence through agent lifecycle, disabled-state restoration, global detail changes, and explicit recall validation/cancellation/context isolation. Completion-evidence tests were removed with the obsolete automatic evaluator.
 
-Exercise both modes with **two processes already running in different projects in the same profile**. Raise verbosity in one terminal and verify the other's status and automatic assessment feedback follow it without a restart; lower it and verify a subsequent no-tip assessment produces no notification. A third new process must see the saved value, and historical session mode metadata must not override it. Confirm global changes preserve disabled sessions, suppress pending discovery when lowered elsewhere, and support native `verbosity`, `verbosity up`, and `verbosity down` autocomplete. An ordinary completed task may produce a grounded discovery tip in verbose mode without implying avoidable effort; quiet mode rejects discovery-only recommendations. Keep successful no-tip assessments distinct from skipped, deferred, or failed outcomes. Use an isolated agent-directory adapter for source QA so these checks do not change personal settings.
+Native QA must exercise a first prompt and confirm its widget appears **before `agent_start`**, then stays visible through the actual primary turn and while composing. Verify both a related request and a random reminder, plus steering/follow-up submission while work is active. Backend delivery/replay and synthetic updates must not rotate the card again. Observe that ordinary prompt hints request no ephemeral turn.
 
-Exercise `/trainer demo` separately: it must show an explicitly marked preview immediately, with no provider request, primary-agent start, or evaluation marker; preserve the disabled setting; cancel a pending assessment; and support argument autocomplete.
+With two processes already running in different projects, change global verbosity in one and confirm the next prompt in the other gets detailed or compact output as selected, never silence solely because it is quiet. Preserve disabled sessions, status-query behavior, session switching, and native control autocomplete. Use an isolated agent-directory adapter for source QA so shared-preference checks do not change personal settings.
 
-Exercise recall with real installed skills in a fresh process: select among `advance`, `simplify`, `improve`, and `wrap-up` for their distinct outcomes; decline an unavailable skill and an intent-changing match. Verify the exact registered invocation, verbatim constraints, no primary execution/evaluation marker, unchanged disabled state, status preservation, cancellation, and native `recall` autocomplete. Model selection remains a judgment; registry validation prevents teaching a capability that is no longer available.
+Exercise demo and explicit recall separately, including recall while disabled and cancellation by a newer real prompt. Check exact registered invocations, complete request constraints, no automatic execution or session enabling, oversized unrelated history isolation, and unchanged model routing. A native recall requests one tool-free side turn; passive hints request none.
 
-For source QA, `--no-extensions` also skips plugin-provided skill discovery. Expose the actual installed skills through a disposable project's `.omp/skills` discovery path, or verify recall in a fresh normal process after installing the released Trainer artifact. Do not load both the installed Trainer and a source copy.
+For source QA, load only the source extension and inspect the process's actual skill/command registry. Expose installed skills through a disposable project's discovery path when needed. Do not load both installed Trainer and a source copy.
 
 Issue branches use `issue-<number>-<outcome>`. Open a linked draft PR, complete self-review and focused native QA, then merge into `main`. No publishing CI or npm registry release is configured: the GitHub repository is the installable artifact.
 
