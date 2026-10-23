@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { availableCapabilities } from "../lib/available-capabilities.js"
+
 import { validateRecall } from "../lib/recall-prompt.js"
 
 test("when a recalled skill fits, its registered invocation keeps every original constraint", () => {
