@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0
+
+### Fixed
+- Fill the native terminal width with both card borders and wrap text instead of clipping it.
+- Reflow the existing card on resize and clear stale continuation rows when it widens.
+
+### Changed
+- Teach only registered skills and slash commands in passive hints and explicit recall; remove agent-tool reminders and internal tool citations.
+- Preserve all supplied card content across wrapped rows, including long invocations, rather than limiting cards to ten physical rows.
+- Use a registered Trainer control in the demo; keep cards below other footer messages.
+
 ## 0.7.1
 
 ### Changed
