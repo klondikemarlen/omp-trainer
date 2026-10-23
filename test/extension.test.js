@@ -18,7 +18,7 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
   const handlers = new Map()
   const commands = new Map()
   const notifications = []
-  const widgets = new Map()
+  const statuses = new Map()
   const entries = []
   const features = []
   const timers = new Set()
@@ -32,13 +32,13 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
     sessionManager: { getBranch: () => entries, getSessionId: () => "session" },
     ui: {
       notify: message => notifications.push(message),
-      setWidget: (key, content) => {
+      setStatus: (key, content) => {
         if (content === undefined) {
-          widgets.delete(key)
+          statuses.delete(key)
           return
         }
 
-        widgets.set(key, content)
+        statuses.set(key, content)
       },
     },
     setTimeout: (callback, delay) => { const timer = { callback, delay }; timers.add(timer); return timer },
@@ -55,7 +55,14 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
   })
   async function emit(name, event = {}) { return handlers.get(name)?.(event, ctx) }
   async function input(text, source = "interactive") { return emit("input", { text, source }) }
-  return { ctx, agentDir, entries, features, notifications, widgets, commands, emit, input }
+  function hint() {
+    const rows = [...statuses].filter(([key]) => key.startsWith("zz-omp-trainer.hint."))
+      .sort(([left], [right]) => left.localeCompare(right)).map(([, text]) => text)
+    if (rows.length === 0) return undefined
+
+    return rows
+  }
+  return { ctx, agentDir, entries, features, notifications, statuses, hint, commands, emit, input }
 }
 
 test("when a user submits the first prompt without an inference API, a related hint appears immediately", async () => {
@@ -64,7 +71,7 @@ test("when a user submits the first prompt without an inference API, a related h
   // Act
   await host.input("Read alpha.txt without changing it.")
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: read/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: read/)
 })
 
 test("when primary and background work remain active, a queued user prompt still gets a hint", async () => {
@@ -76,7 +83,7 @@ test("when primary and background work remain active, a queued user prompt still
   // Act
   await host.input("Find project files named alpha.", "rpc")
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: glob/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: glob/)
 })
 
 test("when the prompt has no related feature, a labelled random reminder is shown instead of silence", async () => {
@@ -85,20 +92,20 @@ test("when the prompt has no related feature, a labelled random reminder is show
   // Act
   await host.input("Good morning.")
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Random feature reminder:/)
+  assert.match(host.hint()?.[1] ?? "", /Random feature reminder:/)
 })
 
 test("when the primary starts and finishes work, the current prompt hint remains visible", async () => {
   // Arrange
   const host = runtime(undefined)
   await host.input("Read alpha.txt.")
-  const hint = host.widgets.get("omp-trainer.hint")
+  const hint = host.hint()
   // Act
   await host.emit("agent_start")
   await host.emit("session_stop")
   await host.emit("agent_end")
   // Assert
-  assert.deepEqual(host.widgets.get("omp-trainer.hint"), hint)
+  assert.deepEqual(host.hint(), hint)
 })
 
 test("when the next prompt is submitted, its feature replaces the previous prompt hint", async () => {
@@ -108,7 +115,7 @@ test("when the next prompt is submitted, its feature replaces the previous promp
   // Act
   await host.input("Find project files named beta.")
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: glob/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: glob/)
 })
 
 test("when an image-only prompt is submitted, a passive reminder still appears", async () => {
@@ -117,7 +124,7 @@ test("when an image-only prompt is submitted, a passive reminder still appears",
   // Act
   await host.emit("input", { text: "", images: [{ type: "image" }], source: "interactive" })
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Random feature reminder:/)
+  assert.match(host.hint()?.[1] ?? "", /Random feature reminder:/)
 })
 
 test("when a skill invocation is submitted, its raw registered name can select the related feature", async () => {
@@ -127,18 +134,18 @@ test("when a skill invocation is submitted, its raw registered name can select t
   // Act
   await host.input("/skill:simplify src/example.js")
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: skill: \/skill:simplify/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: skill: \/skill:simplify/)
 })
 
 test("when input is synthetic rather than interactive or RPC, it does not rotate the user's hint", async () => {
   // Arrange
   const host = runtime(undefined)
   await host.input("Read alpha.txt.")
-  const hint = host.widgets.get("omp-trainer.hint")
+  const hint = host.hint()
   // Act
   await host.input("Find project files.", "extension")
   // Assert
-  assert.deepEqual(host.widgets.get("omp-trainer.hint"), hint)
+  assert.deepEqual(host.hint(), hint)
 })
 
 test("when the agent is a subagent, user input cannot create a main-session learning hint", async () => {
@@ -148,7 +155,7 @@ test("when the agent is a subagent, user input cannot create a main-session lear
   // Act
   await host.input("Read alpha.txt.")
   // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+  assert.equal(host.hint(), undefined)
 })
 
 test("when UI is unavailable, the input event does not claim to display a hint", async () => {
@@ -158,7 +165,7 @@ test("when UI is unavailable, the input event does not claim to display a hint",
   // Act
   await host.input("Read alpha.txt.")
   // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+  assert.equal(host.hint(), undefined)
 })
 
 test("when a disabled session resumes, subsequent prompts remain silent", async () => {
@@ -169,7 +176,7 @@ test("when a disabled session resumes, subsequent prompts remain silent", async 
   // Act
   await host.input("Read alpha.txt.")
   // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+  assert.equal(host.hint(), undefined)
 })
 
 test("when Trainer is turned off, the visible hint is cleared and the next prompt cannot replace it", async () => {
@@ -180,21 +187,21 @@ test("when Trainer is turned off, the visible hint is cleared and the next promp
   await host.commands.get("trainer").handler("off", host.ctx)
   await host.input("Find project files.")
   // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+  assert.equal(host.hint(), undefined)
 })
 
 test("when status and verbosity are queried, the current passive hint is preserved", async () => {
   // Arrange
   const host = runtime(undefined)
   await host.input("Read alpha.txt.")
-  const hint = host.widgets.get("omp-trainer.hint")
+  const hint = host.hint()
   // Act
   await host.input("/trainer status")
   await host.commands.get("trainer").handler("status", host.ctx)
   await host.input("/trainer verbosity")
   await host.commands.get("trainer").handler("verbosity", host.ctx)
   // Assert
-  assert.deepEqual(host.widgets.get("omp-trainer.hint"), hint)
+  assert.deepEqual(host.hint(), hint)
 })
 
 test("when the session changes, the previous session's feature hint is not replayed", async () => {
@@ -204,7 +211,7 @@ test("when the session changes, the previous session's feature hint is not repla
   // Act
   await host.emit("session_switch")
   // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+  assert.equal(host.hint(), undefined)
 })
 
 test("when another terminal lowers verbosity, the next prompt still gets a compact hint", async () => {
@@ -217,7 +224,7 @@ test("when another terminal lowers verbosity, the next prompt still gets a compa
   await controller.commands.get("trainer").handler("verbosity down", controller.ctx)
   await observer.input("Read beta.txt.")
   // Assert
-  assert.deepEqual(observer.widgets.get("omp-trainer.hint"), ["Trainer hint: Related feature: tool: read (omp://tools/read.md)."])
+  assert.equal(observer.hint()?.length, 3)
 })
 
 test("when a long prompt arrives with an oversized catalog, passive selection is not skipped by inference limits", async () => {
@@ -227,7 +234,7 @@ test("when a long prompt arrives with an oversized catalog, passive selection is
   // Act
   await host.input("Read alpha.txt. " + "x".repeat(32_000))
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: read/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: read/)
 })
 
 test("when new user input arrives during recall, the late recall result cannot overwrite its passive hint", async () => {
@@ -241,7 +248,7 @@ test("when new user input arrives during recall, the late recall result cannot o
   finish({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Inspect a known file.", preservesIntent: true }) })
   await recalling
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Related feature: tool: glob/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: glob/)
 })
 
 test("when explicit recall is used while passive hints are disabled, it does not enable the session", async () => {
@@ -263,7 +270,7 @@ test("when global settings are invalid, the prompt shows an availability diagnos
   // Act
   await host.input("Read alpha.txt.")
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Trainer status: Unavailable: Global Trainer verbosity/)
+  assert.match(host.hint()?.[1] ?? "", /Unavailable: Global Trainer verbosity/)
 })
 
 test("when explicit recall has oversized unrelated history, bounded recall still produces its capability result", async () => {
@@ -285,7 +292,7 @@ test("when explicit recall has oversized unrelated history, bounded recall still
   // Act
   await host.commands.get("trainer").handler("recall Read alpha.txt without edits.", host.ctx)
   // Assert
-  assert.match(host.widgets.get("omp-trainer.hint")?.[0] ?? "", /Trainer recall: tool: read/)
+  assert.match(host.hint()?.[1] ?? "", /tool: read/)
 })
 
 test("when a disabled session requests a demo, the preview does not enable future prompt hints", async () => {
@@ -296,7 +303,7 @@ test("when a disabled session requests a demo, the preview does not enable futur
   // Act
   await host.input("Read alpha.txt.")
   // Assert
-  assert.equal(host.widgets.has("omp-trainer.hint"), false)
+  assert.equal(host.hint(), undefined)
 })
 
 test("when global verbosity cannot be written, the command reports failure instead of claiming it was saved", async () => {
@@ -309,4 +316,21 @@ test("when global verbosity cannot be written, the command reports failure inste
   await host.commands.get("trainer").handler("verbosity down", host.ctx)
   // Assert
   assert.match(host.notifications.at(-1), /global verbosity unavailable/)
+})
+
+test("when Trainer is disabled, the other extensions' footer messages remain visible", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.statuses.set("instance-control", "instance example")
+  host.statuses.set("project-time", "1m (dev)")
+  host.statuses.set("worktree-status", "cwd/wt: example")
+  await host.input("Read alpha.txt.")
+  // Act
+  await host.commands.get("trainer").handler("off", host.ctx)
+  // Assert
+  assert.deepEqual(host.statuses, new Map([
+    ["instance-control", "instance example"],
+    ["project-time", "1m (dev)"],
+    ["worktree-status", "cwd/wt: example"],
+  ]))
 })
