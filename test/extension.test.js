@@ -20,7 +20,10 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
   const notifications = []
   const statuses = new Map()
   const entries = []
-  const features = []
+  const features = [
+    { name: "verifier", description: "Inspect verification status without running checks.", source: "extension" },
+    { name: "plan", description: "Plan the requested work before implementation.", source: "builtin" },
+  ]
   const timers = new Set()
   const ctx = {
     agent: { kind: "main" },
@@ -49,7 +52,6 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
     setLabel() {},
     on: (event, handler) => handlers.set(event, handler),
     registerCommand: (name, command) => commands.set(name, command),
-    getActiveTools: () => ["read", "grep", "glob", "task"],
     getCommands: () => [...features, ...[...commands].map(([name, command]) => ({ name, description: command.description, source: "extension" }))],
     appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }),
   })
@@ -69,9 +71,9 @@ test("when a user submits the first prompt without an inference API, a related h
   // Arrange
   const host = runtime(undefined)
   // Act
-  await host.input("Read alpha.txt without changing it.")
+  await host.input("Show verifier status without running checks.")
   // Assert
-  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: read/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: command: \/verifier/)
 })
 
 test("when primary and background work remain active, a queued user prompt still gets a hint", async () => {
@@ -81,9 +83,9 @@ test("when primary and background work remain active, a queued user prompt still
   host.ctx.hasPendingMessages = () => true
   host.ctx.getAsyncJobSnapshot = () => ({ running: [{ id: "work" }], delivery: { queued: 1, delivering: true } })
   // Act
-  await host.input("Find project files named alpha.", "rpc")
+  await host.input("Plan the requested work.", "rpc")
   // Assert
-  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: glob/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: command: \/plan/)
 })
 
 test("when the prompt has no related feature, a labelled random reminder is shown instead of silence", async () => {
@@ -111,11 +113,11 @@ test("when the primary starts and finishes work, the current prompt hint remains
 test("when the next prompt is submitted, its feature replaces the previous prompt hint", async () => {
   // Arrange
   const host = runtime(undefined)
-  await host.input("Read alpha.txt.")
+  await host.input("Show verifier status.")
   // Act
-  await host.input("Find project files named beta.")
+  await host.input("Plan the requested work.")
   // Assert
-  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: glob/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: command: \/plan/)
 })
 
 test("when an image-only prompt is submitted, a passive reminder still appears", async () => {
@@ -232,31 +234,31 @@ test("when a long prompt arrives with an oversized catalog, passive selection is
   const host = runtime(undefined)
   host.features.push({ name: "huge-command", description: "x".repeat(25_000), source: "extension" })
   // Act
-  await host.input("Read alpha.txt. " + "x".repeat(32_000))
+  await host.input("Show verifier status. " + "x".repeat(32_000))
   // Assert
-  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: read/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: command: \/verifier/)
 })
 
 test("when new user input arrives during recall, the late recall result cannot overwrite its passive hint", async () => {
   // Arrange
   let finish
   const host = runtime(() => new Promise(resolve => { finish = resolve }))
-  const recalling = host.commands.get("trainer").handler("recall Read alpha.txt without edits.", host.ctx)
+  const recalling = host.commands.get("trainer").handler("recall Show verification status without running checks.", host.ctx)
   await new Promise(resolve => setImmediate(resolve))
   // Act
-  await host.input("Find project files named beta.")
-  finish({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Inspect a known file.", preservesIntent: true }) })
+  await host.input("Plan the requested work.")
+  finish({ replyText: JSON.stringify({ capabilityId: "command:verifier", reason: "Inspect verification status.", preservesIntent: true }) })
   await recalling
   // Assert
-  assert.match(host.hint()?.[1] ?? "", /Related feature: tool: glob/)
+  assert.match(host.hint()?.[1] ?? "", /Related feature: command: \/plan/)
 })
 
 test("when explicit recall is used while passive hints are disabled, it does not enable the session", async () => {
   // Arrange
-  const host = runtime(async () => ({ replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Inspect a known file.", preservesIntent: true }) }))
+  const host = runtime(async () => ({ replyText: JSON.stringify({ capabilityId: "command:verifier", reason: "Inspect verification status.", preservesIntent: true }) }))
   await host.commands.get("trainer").handler("off", host.ctx)
   // Act
-  await host.commands.get("trainer").handler("recall Read alpha.txt without edits.", host.ctx)
+  await host.commands.get("trainer").handler("recall Show verification status without running checks.", host.ctx)
   await host.commands.get("trainer").handler("status", host.ctx)
   // Assert
   assert.match(host.notifications.at(-1), /Trainer [^:]+: off\./)
@@ -287,12 +289,12 @@ test("when explicit recall has oversized unrelated history, bounded recall still
       throw new Error("Ephemeral turn context exceeds the configured limit")
     }
 
-    return { replyText: JSON.stringify({ capabilityId: "tool:read", reason: "Inspect a known file.", preservesIntent: true }) }
+    return { replyText: JSON.stringify({ capabilityId: "command:verifier", reason: "Inspect verification status.", preservesIntent: true }) }
   }
   // Act
-  await host.commands.get("trainer").handler("recall Read alpha.txt without edits.", host.ctx)
+  await host.commands.get("trainer").handler("recall Show verification status without running checks.", host.ctx)
   // Assert
-  assert.match(host.hint()?.[1] ?? "", /tool: read/)
+  assert.match(host.hint()?.[1] ?? "", /command: \/verifier/)
 })
 
 test("when a disabled session requests a demo, the preview does not enable future prompt hints", async () => {
@@ -333,4 +335,28 @@ test("when Trainer is disabled, the other extensions' footer messages remain vis
     ["project-time", "1m (dev)"],
     ["worktree-status", "cwd/wt: example"],
   ]))
+})
+
+test("when the terminal widens, the existing card reflows without leaving stale continuation rows", async t => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.mode = "tui"
+  let columns = 35
+  const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, "columns")
+  const originalTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY")
+  Object.defineProperty(process.stdout, "columns", { configurable: true, get: () => columns })
+  Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true })
+  t.after(async () => {
+    await host.emit("session_shutdown")
+    if (originalColumns) Object.defineProperty(process.stdout, "columns", originalColumns)
+    else delete process.stdout.columns
+    if (originalTty) Object.defineProperty(process.stdout, "isTTY", originalTty)
+    else delete process.stdout.isTTY
+  })
+  await host.input("Show verifier status.")
+  // Act
+  columns = 100
+  process.stdout.emit("resize")
+  // Assert
+  assert.equal(host.hint()?.length, 4)
 })
