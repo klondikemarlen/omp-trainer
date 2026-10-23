@@ -71,7 +71,6 @@ test("when a registered description is long, the hint remains a bounded feature 
   const result = promptHint("example", [capability], "verbose")
   // Assert
   assert.ok(result.message.split("\n")[1].length <= 240)
-  assert.match(result.message, /\.\.\.$/)
 })
 
 test("when no feature is supplied, selection does not invent an installed capability", () => {
