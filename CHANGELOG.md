@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+- Show a model-free registered skill or command reminder when OMP starts, before the first prompt.
+- Honor restored session on/off state and shared verbosity for startup hints, while preserving existing per-prompt hints and session-switch cleanup.
+
 ## 0.8.0
 
 ### Fixed

@@ -127,6 +127,29 @@ export function trainer(pi) {
     }
   }
 
+  function showFeatureHint(request, ctx, occasion) {
+    try {
+      const hint = promptHint(request, availableCapabilities(pi), readVerbosity(agentDir(ctx)), previousCapabilityId)
+      if (!hint) {
+        showHint(ctx, "Feature reminder: /trainer status shows whether hints are on and the shared global verbosity.")
+        lastStatus = `Trainer control reminder shown ${occasion}`
+        return
+      }
+
+      previousCapabilityId = hint.capabilityId
+      if (hint.related) {
+        lastStatus = `Related feature shown ${occasion}`
+      } else {
+        lastStatus = `Random feature reminder shown ${occasion}`
+      }
+
+      showHint(ctx, hint.message)
+    } catch (error) {
+      lastStatus = `Unavailable: ${String(error?.message ?? error).slice(0, 300)}`
+      showHint(ctx, lastStatus, "Trainer status")
+    }
+  }
+
   function showPromptHint(event, ctx) {
     if (ctx.agent?.kind !== "main" || !ctx.hasUI) return
     if (event.source !== "interactive" && event.source !== "rpc") return
@@ -138,25 +161,7 @@ export function trainer(pi) {
     cancel(ctx)
     if (!enabled) return
 
-    try {
-      const hint = promptHint(request, availableCapabilities(pi), readVerbosity(agentDir(ctx)), previousCapabilityId)
-      if (!hint) {
-        showHint(ctx, "Feature reminder: /trainer status shows whether hints are on and the shared global verbosity.")
-        lastStatus = "Trainer control reminder shown for latest prompt"
-        return
-      }
-
-      previousCapabilityId = hint.capabilityId
-      if (hint.related) {
-        lastStatus = "Related feature shown for latest prompt"
-      } else {
-        lastStatus = "Random feature reminder shown for latest prompt"
-      }
-      showHint(ctx, hint.message)
-    } catch (error) {
-      lastStatus = `Unavailable: ${String(error?.message ?? error).slice(0, 300)}`
-      showHint(ctx, lastStatus, "Trainer status")
-    }
+    showFeatureHint(request, ctx, "for latest prompt")
   }
 
   async function recall(ctx, request) {
@@ -198,7 +203,7 @@ export function trainer(pi) {
   }
 
   pi.registerCommand("trainer", {
-    description: "Per-prompt feature hints and model-assisted recall: on, off, verbosity, status, demo, recall",
+    description: "Startup and per-prompt feature hints and model-assisted recall: on, off, verbosity, status, demo, recall",
     getArgumentCompletions: prefix => ["on", "off", "verbosity", "verbosity up", "verbosity down", "status", "demo", "recall"].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
     handler: async (args, ctx) => {
       const input = args.trim() || "status"
@@ -255,7 +260,7 @@ export function trainer(pi) {
 
       try {
         const verbosity = readVerbosity(agentDir(ctx))
-        ctx.ui.notify(`Trainer 0.8.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
+        ctx.ui.notify(`Trainer 0.9.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
       } catch (error) {
         ctx.ui.notify(`Trainer ${state}. Global verbosity unavailable: ${String(error?.message ?? error).slice(0, 300)}`, "warning")
       }
@@ -272,7 +277,14 @@ export function trainer(pi) {
     return { messages: [prompt] }
   })
 
-  for (const event of ["session_start", "session_switch", "session_branch", "session_tree"]) pi.on(event, restore)
+  pi.on("session_start", (event, ctx) => {
+    restore(event, ctx)
+    if (!enabled || ctx.agent?.kind !== "main" || !ctx.hasUI) return
+
+    showFeatureHint("", ctx, "at startup")
+  })
+
+  for (const event of ["session_switch", "session_branch", "session_tree"]) pi.on(event, restore)
   pi.on("agent_start", cancelRequest)
   pi.on("input", showPromptHint)
   pi.on("session_shutdown", (_event, ctx) => cancel(ctx))
