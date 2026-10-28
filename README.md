@@ -1,5 +1,5 @@
 # omp-trainer
-A passive skill or command reminder on every submitted prompt: related when feature keywords fit, otherwise random. Explicit recall provides model-assisted help finding a registered skill or slash command.
+A passive skill or command reminder when OMP starts and on every submitted prompt: related when feature keywords fit, otherwise random. Explicit recall provides model-assisted help finding a registered skill or slash command.
 
 ## Install and Control
 
@@ -9,7 +9,7 @@ Requires OMP's main-session external `input` hook, registered command/skill cata
 omp plugin install github:klondikemarlen/omp-trainer
 ```
 
-Start a **new OMP process** after installation to load this release. Trainer is enabled by default; global verbosity starts at **verbose** until changed.
+Start a **new OMP process** after installation to load this release. Trainer is enabled by default and shows a random feature reminder immediately, before the first prompt; global verbosity starts at **verbose** until changed. Disabled sessions stay silent, including on resume.
 
 - `/trainer status` — show the loaded version, session enabled state, global verbosity, and latest hint or recall outcome.
 - `/trainer demo` — immediately show a clearly labelled preview through the real footer card, without model inference.
@@ -22,7 +22,7 @@ Start a **new OMP process** after installation to load this release. Trainer is 
 - `OMP_TRAINER_ENABLED=0 omp` — default new sessions to disabled.
 - `omp plugin disable omp-trainer` — disable the installed plugin entirely.
 
-Verbosity is saved in `trainer/config.json` under the active OMP agent directory (normally `~/.omp/agent/trainer/config.json`). Every terminal using that profile reads the same setting, regardless of project or session. Changes apply to its next automatic hint or status query without polling or restarting; separate OMP profiles keep separate settings. Verbosity controls card detail, not frequency: both levels show a hint on every supported prompt.
+Verbosity is saved in `trainer/config.json` under the active OMP agent directory (normally `~/.omp/agent/trainer/config.json`). Every terminal using that profile reads the same setting, regardless of project or session. Changes apply to its next automatic hint or status query without polling or restarting; separate OMP profiles keep separate settings. Verbosity controls card detail, not frequency: both levels show a hint at startup and on every supported prompt.
 
 The two levels are `quiet` and `verbose`: `up` selects detailed cards, `down` selects compact cards, and repeating either stays at that level. Writes atomically replace the private settings file. Invalid settings or failed writes produce a diagnostic rather than silently switching to louder output or claiming a change was saved.
 
@@ -64,7 +64,9 @@ Explicit skill invocation is an optional memory aid: ordinary intent should alre
 
 Recall works while passive hints are off without enabling them. It never executes the supplied request or saves a completed-work assessment. To recall a capability again, supply the request again; Trainer stores no hint history and scans no clipboard or cross-session archive. Recall requires idle primary/background work and uses the inference bounds below. Global verbosity controls automatic feature-card detail, not the verbatim request preserved in an explicit recall result.
 
-## Passive Learning on Every Prompt
+## Passive Learning at Startup and on Every Prompt
+
+At startup, Trainer restores the session's on/off choice, then shows a random reminder from the live skill/command catalog when enabled in a main session with a usable UI. It uses the same footer card and shared verbosity as prompt hints, without submitting work or requesting a model.
 
 Trainer observes human input **at submission**, before command/skill expansion and queue insertion. A normal first prompt, a later prompt, or a steering/follow-up submission receives its hint immediately, even while primary or background work is active. Task completion, todos, conversation size, model availability, and successful inference are not prerequisites.
 
@@ -81,7 +83,7 @@ For example:
 > changing behavior.
 > ------------------------------------------------------------
 
-The card stays visible during agent start, streaming, completion, and composing the next request. The next submitted prompt replaces it. Trainer appears **below the instance, development-time, and cwd/worktree messages**, between dashed separators, with no duplicate notification. Demo, recall, and availability diagnostics use the same card.
+The card stays visible during agent start, streaming, completion, and composing the next request. The next submitted prompt replaces it, including the initial startup card. Trainer appears **below the instance, development-time, and cwd/worktree messages**, between dashed separators, with no duplicate notification. Demo, recall, and availability diagnostics use the same card.
 
 OMP 18.12.6 renders below-editor widgets above footer statuses, so Trainer uses its own lexically last `zz-omp-trainer.hint.*` status rows instead. Other extensions retain ownership of their statuses and can refresh them without moving Trainer above them.
 
@@ -89,7 +91,7 @@ In a native TUI, both borders fill the terminal's actual column count. Text wrap
 
 RPC hosts do not expose their viewport dimensions through OMP 18.12.6's status API. They receive an 80-column wrapped card; remote full-width borders and resize reflow are not guaranteed. Native resizing uses the local TTY's `resize` event, not polling or inference, and the listener is removed when the card is cleared.
 
-`/trainer`, `/trainer status`, and `/trainer verbosity` preserve the card. Trainer's own commands do not trigger a second passive reminder: demo, recall, disable, and verbosity changes own their display behavior. Session changes and shutdown clear the card without replaying it on resume. When no other feature catalog is available, Trainer can still remind you about its own status control.
+`/trainer`, `/trainer status`, and `/trainer verbosity` preserve the card. Trainer's own commands do not trigger a second passive reminder: demo, recall, disable, and verbosity changes own their display behavior. Session changes and shutdown clear the card without replaying it; starting a new OMP process, including a resumed session, generates a fresh startup reminder if enabled. When no other feature catalog is available, Trainer can still remind you about its own status control.
 
 Supported ingress is main-session Enter/Ctrl+Enter and RPC/RPC UI `prompt`, `steer`, `follow_up`, and `abort_and_prompt`. Image-only input also gets a reminder. Empty drafts, synthetic/advisor traffic, queue replay, and subagent chat do not rotate main-session hints. OMP's synthetic `.`/`c` continuation shortcuts, print/ACP entry paths outside the external-input-hook contract, and hosts without a usable UI do not get a fabricated hint display.
 
@@ -97,7 +99,7 @@ These are passive learning cards, **not instructions to the primary agent**, cor
 
 ## Evidence, Privacy, and Limits
 
-Automatic hints inspect only the submitted text for keyword selection and the live skill/command catalog. They do not scan conversation history, wait for stop hooks, infer task completion, or request an assessment. Long prompts and catalogs are not rejected by inference evidence limits. Feature descriptions are summarized to at most 240 characters, then wrapped for display; user requests are not rewritten.
+Startup hints inspect only the live skill/command catalog; prompt hints additionally inspect submitted text for keyword selection. They do not scan conversation history, wait for stop hooks, infer task completion, or request an assessment. Long prompts and catalogs are not rejected by inference evidence limits. Feature descriptions are summarized to at most 240 characters, then wrapped for display; user requests are not rewritten.
 
 Only the session enabled flag is appended as Trainer state metadata. The shared settings file stores only verbosity. Trainer retains the previous feature identifier in memory to avoid consecutive random repeats, but stores no prompt or hint archive. Historical completion-assessment markers are no longer read or written. The footer card is not injected into primary/advisor model context.
 
@@ -118,6 +120,8 @@ omp --no-extensions --extension ./index.js
 ```
 
 The Node suite covers skill/command selection, exclusion of agent tools, random fallback and immediate-repeat avoidance, immediate first/busy/image/skill input, hint persistence, disabled-state restoration, global detail changes, full-width borders, Unicode/long-token wrapping, resize cleanup, and explicit recall validation/cancellation/context isolation. Completion-evidence tests were removed with the obsolete automatic evaluator.
+
+Before submitting anything in a fresh process, confirm an enabled session shows a startup card and `/trainer status` reports a startup reminder. A saved disabled session and `OMP_TRAINER_ENABLED=0` new session must remain silent. Confirm the first real prompt replaces the startup card and that session switches clear it without generating another reminder.
 
 Native QA must exercise a first prompt and confirm its card appears **before `agent_start`**, then stays visible through the actual primary turn and while composing. Verify the card follows instance, development-time, and worktree status rows, including after those statuses refresh. Use a long registered skill/command description: check the complete text and exact full-width borders at wide and narrow widths, then resize the same visible card and confirm reflow without a new prompt or stale rows. Verify related and random reminders and steering/follow-up submission while work is active. Backend delivery/replay and synthetic updates must not rotate the card again. Observe that ordinary prompt hints request no ephemeral turn.
 
