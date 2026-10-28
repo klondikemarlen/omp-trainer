@@ -67,6 +67,90 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
   return { ctx, agentDir, entries, features, notifications, statuses, hint, commands, emit, input }
 }
 
+test("when an enabled main session starts, a registered feature appears before any prompt or inference", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  // Act
+  await host.emit("session_start")
+  // Assert
+  assert.match(host.hint()?.[1] ?? "", /Random feature reminder: command: \/(?:verifier|plan|trainer)\./)
+})
+
+test("when the first prompt follows startup, its related feature replaces the startup reminder", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  await host.emit("session_start")
+  // Act
+  await host.input("Show verifier status without running checks.")
+  // Assert
+  assert.match(host.hint()?.[1] ?? "", /Related feature: command: \/verifier/)
+})
+
+test("when a saved disabled session starts, no startup reminder appears", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.entries.push({ type: "custom", customType: "omp-trainer.state", data: { enabled: false } })
+  // Act
+  await host.emit("session_start")
+  // Assert
+  assert.equal(host.hint(), undefined)
+})
+
+test("when the environment disables new sessions, startup remains silent", async t => {
+  // Arrange
+  const original = process.env.OMP_TRAINER_ENABLED
+  t.after(() => {
+    if (original === undefined) delete process.env.OMP_TRAINER_ENABLED
+    else process.env.OMP_TRAINER_ENABLED = original
+  })
+  process.env.OMP_TRAINER_ENABLED = "0"
+  const host = runtime(undefined)
+  // Act
+  await host.emit("session_start")
+  // Assert
+  assert.equal(host.hint(), undefined)
+})
+
+test("when a saved enabled session overrides the disabled environment, startup shows a reminder", async t => {
+  // Arrange
+  const original = process.env.OMP_TRAINER_ENABLED
+  t.after(() => {
+    if (original === undefined) delete process.env.OMP_TRAINER_ENABLED
+    else process.env.OMP_TRAINER_ENABLED = original
+  })
+  process.env.OMP_TRAINER_ENABLED = "0"
+  const host = runtime(undefined)
+  host.entries.push({ type: "custom", customType: "omp-trainer.state", data: { enabled: true } })
+  // Act
+  await host.emit("session_start")
+  // Assert
+  assert.match(host.hint()?.[1] ?? "", /Random feature reminder:/)
+})
+
+for (const context of ["headless", "subagent"]) {
+  test(`when a ${context} session starts, no main-session reminder is displayed`, async () => {
+    // Arrange
+    const host = runtime(undefined)
+    if (context === "headless") host.ctx.hasUI = false
+    else host.ctx.agent = { kind: "sub" }
+    // Act
+    await host.emit("session_start")
+    // Assert
+    assert.equal(host.hint(), undefined)
+  })
+}
+
+test("when startup reads quiet verbosity, its feature card omits the description", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  mkdirSync(join(host.agentDir, "trainer"))
+  writeFileSync(join(host.agentDir, "trainer", "config.json"), JSON.stringify({ verbosity: "quiet" }))
+  // Act
+  await host.emit("session_start")
+  // Assert
+  assert.match(host.hint()?.slice(1, -1).join("\n") ?? "", /^Random feature reminder: command: \/(?:verifier|plan|trainer)\.$/)
+})
+
 test("when a user submits the first prompt without an inference API, a related hint appears immediately", async () => {
   // Arrange
   const host = runtime(undefined)
