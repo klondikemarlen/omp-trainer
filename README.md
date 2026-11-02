@@ -1,9 +1,9 @@
 # omp-trainer
-A passive skill or command reminder when OMP starts and on every submitted prompt: related when feature keywords fit, otherwise random. Explicit recall provides model-assisted help finding a registered skill or slash command.
+A passive skill, command, or useful keyboard-shortcut reminder when OMP starts and on every submitted prompt: related when feature keywords fit, otherwise random. Explicit recall provides model-assisted help finding a registered skill or slash command.
 
 ## Install and Control
 
-Requires OMP's main-session external `input` hook, registered command/skill catalog, and keyed footer statuses (exercised with OMP 18.12.6). Explicit recall additionally uses `runEphemeralTurn`, context transforms, and managed timers.
+Requires OMP's main-session external `input` hook, registered command/skill catalog, and keyed footer statuses (exercised with OMP 18.16.0). Native keyboard reminders additionally use the injected `boundKeys` and `formatKeyHints` SDK helpers; hosts without them retain skill/command hints. Explicit recall additionally uses `runEphemeralTurn`, context transforms, and managed timers.
 
 ```sh
 omp plugin install github:klondikemarlen/omp-trainer
@@ -34,8 +34,8 @@ Use `/trainer demo` to preview the same footer card immediately, without submitt
 
 | Level | Every supported prompt | Card detail |
 | --- | --- | --- |
-| `verbose` (default) | A related or random skill/command reminder | Feature category, exact registered invocation, and a concise description, wrapped to the terminal width. |
-| `quiet` | A related or random skill/command reminder | A compact feature summary and invocation, wrapped as needed. |
+| `verbose` (default) | A related or random skill/command/shortcut reminder | Feature category, exact registered invocation or configured keys, and a concise description, wrapped to the terminal width. |
+| `quiet` | A related or random skill/command/shortcut reminder | A compact feature summary and invocation or named keyboard action with its configured keys, wrapped as needed. |
 
 Use `/trainer verbosity down` when the detailed cards are distracting, `/trainer verbosity up` to restore descriptions, or `/trainer off` to stop automatic hints in the current session. Global verbosity never enables a deliberately disabled session. Passive hints make **no provider requests** and do not consume model quota.
 
@@ -66,14 +66,16 @@ Recall works while passive hints are off without enabling them. It never execute
 
 ## Passive Learning at Startup and on Every Prompt
 
-At startup, Trainer restores the session's on/off choice, then shows a random reminder from the live skill/command catalog when enabled in a main session with a usable UI. It uses the same footer card and shared verbosity as prompt hints, without submitting work or requesting a model.
+At startup, Trainer restores the session's on/off choice, then shows a random reminder from the live skill/command catalog and, in native terminals, selected keyboard shortcuts when enabled in a main session with a usable UI. It uses the same footer card and shared verbosity as prompt hints, without submitting work or requesting a model.
 
 Trainer observes human input **at submission**, before command/skill expansion and queue insertion. A normal first prompt, a later prompt, or a steering/follow-up submission receives its hint immediately, even while primary or background work is active. Task completion, todos, conversation size, model availability, and successful inference are not prerequisites.
 
 Selection is deliberately simple and model-free:
 - Meaningful feature-name or description keywords can select a **Related feature**. This is a keyword heuristic, not a semantic assessment of your intent.
 - With no supported keyword match, a **Random feature reminder** teaches an available capability without pretending it relates to the task. When alternatives exist, random selection avoids the immediately previous feature; related prompts can still select the same relevant feature.
-- The catalog contains only currently registered skills and slash commands that the prompter can invoke. Agent tools such as `read`, `grep`, `glob`, and `task` are not recommendations. Trainer's own controls can also be taught. No unavailable command, undocumented arguments, or rewritten user prompt is invented.
+- The catalog contains currently registered skills and slash commands that the prompter can invoke, plus selected native keyboard actions with nonempty resolved bindings. Agent tools such as `read`, `grep`, `glob`, and `task` are not recommendations. Trainer's own controls can also be taught. No unavailable command, undocumented arguments, or rewritten user prompt is invented.
+
+Keyboard reminders cover sending a follow-up prompt, copying the prompt, restoring a queued message for editing, searching prompt history, opening an external editor, inserting a newline, pasting raw text, and expanding tool output. This is a curated everyday subset, not every navigation key. Both detail levels show the action name and OMP's current key labels, including remaps and alternative bindings; unbound actions are omitted. Terminal support for individual key chords still varies. RPC hosts keep skill/command-only hints because they do not share the native editor's keyboard controls. `/trainer recall` remains skill/command-only.
 
 For example:
 
@@ -99,7 +101,7 @@ These are passive learning cards, **not instructions to the primary agent**, cor
 
 ## Evidence, Privacy, and Limits
 
-Startup hints inspect only the live skill/command catalog; prompt hints additionally inspect submitted text for keyword selection. They do not scan conversation history, wait for stop hooks, infer task completion, or request an assessment. Long prompts and catalogs are not rejected by inference evidence limits. Feature descriptions are summarized to at most 240 characters, then wrapped for display; user requests are not rewritten.
+Startup hints inspect only the live skill/command catalog and supported native keybindings; prompt hints additionally inspect submitted text for keyword selection. They do not scan conversation history, wait for stop hooks, infer task completion, or request an assessment. Long prompts and catalogs are not rejected by inference evidence limits. Feature descriptions are summarized to at most 240 characters, then wrapped for display; user requests are not rewritten.
 
 Only the session enabled flag is appended as Trainer state metadata. The shared settings file stores only verbosity. Trainer retains the previous feature identifier in memory to avoid consecutive random repeats, but stores no prompt or hint archive. Historical completion-assessment markers are no longer read or written. The footer card is not injected into primary/advisor model context.
 
@@ -113,17 +115,22 @@ If you still see no output, `/trainer status` reports the loaded version, on/off
 
 ## Development and Release
 
+Development linting uses ESLint 10 with recommended JavaScript rules for the entrypoint, library, tests, and configuration. Use Node 22.13+, 24+, or 26+ for development; warnings fail the non-fixing lint command. No separate development wrapper or formatter is configured.
+
 ```sh
+npm run lint
 npm test
 git diff --check
 omp --no-extensions --extension ./index.js
 ```
 
-The Node suite covers skill/command selection, exclusion of agent tools, random fallback and immediate-repeat avoidance, immediate first/busy/image/skill input, hint persistence, disabled-state restoration, global detail changes, full-width borders, Unicode/long-token wrapping, resize cleanup, and explicit recall validation/cancellation/context isolation. Completion-evidence tests were removed with the obsolete automatic evaluator.
+The Node suite covers skill/command selection, native shortcut remaps and unbound actions, RPC and recall exclusion of shortcuts, exclusion of agent tools, random fallback and immediate-repeat avoidance, immediate first/busy/image/skill input, hint persistence, disabled-state restoration, global detail changes, full-width borders, Unicode/long-token wrapping, resize cleanup, and explicit recall validation/cancellation/context isolation. Completion-evidence tests were removed with the obsolete automatic evaluator.
 
 Before submitting anything in a fresh process, confirm an enabled session shows a startup card and `/trainer status` reports a startup reminder. A saved disabled session and `OMP_TRAINER_ENABLED=0` new session must remain silent. Confirm the first real prompt replaces the startup card and that session switches clear it without generating another reminder.
 
 Native QA must exercise a first prompt and confirm its card appears **before `agent_start`**, then stays visible through the actual primary turn and while composing. Verify the card follows instance, development-time, and worktree status rows, including after those statuses refresh. Use a long registered skill/command description: check the complete text and exact full-width borders at wide and narrow widths, then resize the same visible card and confirm reflow without a new prompt or stale rows. Verify related and random reminders and steering/follow-up submission while work is active. Backend delivery/replay and synthetic updates must not rotate the card again. Observe that ordinary prompt hints request no ephemeral turn.
+
+For keyboard hints, submit a prompt containing “copy prompt” or “send follow-up prompt” and confirm the named action and configured keys appear. Check a remapped and an unbound action without changing personal bindings: use an isolated QA profile or an in-memory keybinding fixture in a disposable process. Confirm quiet cards still name the action, ordinary unrelated input can randomly teach a shortcut, and RPC and explicit recall retain their command/skill-only boundary.
 
 With two processes already running in different projects, change global verbosity in one and confirm the next prompt in the other gets detailed or compact output as selected, never silence solely because it is quiet. Preserve disabled sessions, status-query behavior, session switching, and native control autocomplete. Use an isolated agent-directory adapter for source QA so shared-preference checks do not change personal settings.
 

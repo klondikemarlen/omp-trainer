@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0
+
+### Added
+- Teach eight useful native keyboard actions in startup and per-prompt hints, including follow-up prompts and copying the prompt.
+- Show current configured keys, including remaps and alternatives, with an action name in both detail levels; omit unbound shortcuts and keep RPC and explicit recall skill/command-only.
+- Add recommended JavaScript lint checks to the development release check.
+
 ## 0.9.0
 
 ### Added

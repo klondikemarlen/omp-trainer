@@ -24,6 +24,7 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
     { name: "verifier", description: "Inspect verification status without running checks.", source: "extension" },
     { name: "plan", description: "Plan the requested work before implementation.", source: "builtin" },
   ]
+  const keybindings = new Map()
   const timers = new Set()
   const ctx = {
     agent: { kind: "main" },
@@ -50,6 +51,10 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
   }
   trainer({
     setLabel() {},
+    pi: {
+      boundKeys: (action, fallback) => keybindings.get(action) ?? fallback,
+      formatKeyHints: keys => keys.join("/"),
+    },
     on: (event, handler) => handlers.set(event, handler),
     registerCommand: (name, command) => commands.set(name, command),
     getCommands: () => [...features, ...[...commands].map(([name, command]) => ({ name, description: command.description, source: "extension" }))],
@@ -64,7 +69,7 @@ function runtime(evaluate, agentDir = mkdtempSync(join(tmpdir(), "omp-trainer-te
 
     return rows
   }
-  return { ctx, agentDir, entries, features, notifications, statuses, hint, commands, emit, input }
+  return { ctx, agentDir, entries, features, keybindings, notifications, statuses, hint, commands, emit, input }
 }
 
 test("when an enabled main session starts, a registered feature appears before any prompt or inference", async () => {
@@ -221,6 +226,82 @@ test("when a skill invocation is submitted, its raw registered name can select t
   await host.input("/skill:simplify src/example.js")
   // Assert
   assert.match(host.hint()?.[1] ?? "", /Related feature: skill: \/skill:simplify/)
+})
+
+test("when a native prompt names a remapped shortcut, its card teaches the live keys", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.mode = "tui"
+  host.keybindings.set("app.message.followUp", ["alt+x"])
+  // Act
+  await host.input("Send follow-up prompt.")
+  // Assert
+  assert.match(host.hint()?.join("\n") ?? "", /Related feature: keyboard shortcut: Send follow-up prompt — alt\+x\./)
+})
+
+test("when shortcut bindings change, the next prompt does not advertise stale keys", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.mode = "tui"
+  host.keybindings.set("app.clipboard.copyPrompt", ["alt+shift+c"])
+  await host.input("Copy prompt.")
+  host.keybindings.set("app.clipboard.copyPrompt", ["ctrl+shift+c"])
+  // Act
+  await host.input("Copy prompt.")
+  // Assert
+  assert.match(host.hint()?.join("\n") ?? "", /Copy prompt — ctrl\+shift\+c\./)
+})
+
+test("when a shortcut is unbound, related-looking input cannot advertise it", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.mode = "tui"
+  host.keybindings.set("app.message.followUp", [])
+  // Act
+  await host.input("Send follow-up prompt.")
+  // Assert
+  assert.doesNotMatch(host.hint()?.join("\n") ?? "", /keyboard shortcut/)
+})
+
+test("when RPC input names a native shortcut, it still teaches only commands or skills", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.mode = "rpc"
+  host.keybindings.set("app.message.followUp", ["alt+x"])
+  // Act
+  await host.input("Send follow-up prompt.", "rpc")
+  // Assert
+  assert.doesNotMatch(host.hint()?.join("\n") ?? "", /keyboard shortcut/)
+})
+
+test("when quiet verbosity teaches a shortcut, its action remains understandable with multiple keys", async () => {
+  // Arrange
+  const host = runtime(undefined)
+  host.ctx.mode = "tui"
+  host.keybindings.set("app.clipboard.copyPrompt", ["alt+shift+c", "ctrl+shift+c"])
+  mkdirSync(join(host.agentDir, "trainer"))
+  writeFileSync(join(host.agentDir, "trainer", "config.json"), JSON.stringify({ verbosity: "quiet" }))
+  // Act
+  await host.input("Copy prompt.")
+  // Assert
+  assert.match(host.hint()?.slice(1, -1).join("\n") ?? "", /^Related feature: keyboard shortcut: Copy prompt — alt\+shift\+c\/ctrl\+shift\+c\.$/)
+})
+
+test("when explicit recall runs in a native terminal, it cannot recommend a shortcut", async () => {
+  // Arrange
+  const host = runtime(async () => ({
+    replyText: JSON.stringify({
+      capabilityId: "shortcut:app.clipboard.copyPrompt",
+      reason: "Copy the prompt.",
+      preservesIntent: true,
+    }),
+  }))
+  host.ctx.mode = "tui"
+  host.keybindings.set("app.clipboard.copyPrompt", ["alt+shift+c"])
+  // Act
+  await host.commands.get("trainer").handler("recall Copy prompt.", host.ctx)
+  // Assert
+  assert.match(host.hint()?.join("\n") ?? "", /No supported capability matches/)
 })
 
 test("when input is synthetic rather than interactive or RPC, it does not rotate the user's hint", async () => {

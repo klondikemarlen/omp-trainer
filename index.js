@@ -3,6 +3,7 @@ import { promptHint } from "./lib/prompt-hint.js"
 import { recallPrompt, validateRecall } from "./lib/recall-prompt.js"
 import { renderHintCard } from "./lib/render-hint-card.js"
 import { readVerbosity, writeVerbosity } from "./lib/settings.js"
+import { shortcutCapabilities } from "./lib/shortcut-capabilities.js"
 
 // Status rows sort by key; keep the card after instance, project-time, and worktree statuses.
 const HINT_STATUS_PREFIX = "zz-omp-trainer.hint."
@@ -129,7 +130,10 @@ export function trainer(pi) {
 
   function showFeatureHint(request, ctx, occasion) {
     try {
-      const hint = promptHint(request, availableCapabilities(pi), readVerbosity(agentDir(ctx)), previousCapabilityId)
+      const capabilities = availableCapabilities(pi)
+      if (ctx.mode === "tui") capabilities.push(...shortcutCapabilities(pi))
+
+      const hint = promptHint(request, capabilities, readVerbosity(agentDir(ctx)), previousCapabilityId)
       if (!hint) {
         showHint(ctx, "Feature reminder: /trainer status shows whether hints are on and the shared global verbosity.")
         lastStatus = `Trainer control reminder shown ${occasion}`
@@ -260,7 +264,7 @@ export function trainer(pi) {
 
       try {
         const verbosity = readVerbosity(agentDir(ctx))
-        ctx.ui.notify(`Trainer 0.9.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
+        ctx.ui.notify(`Trainer 0.10.0: ${state}. ${lastStatus}. Global verbosity: ${verbosity}. Use /trainer verbosity up|down for detailed or compact hints across terminals in this OMP profile. Automatic hints are model-free; only explicit recall uses a bounded, tool-free turn on the current model.`, "info")
       } catch (error) {
         ctx.ui.notify(`Trainer ${state}. Global verbosity unavailable: ${String(error?.message ?? error).slice(0, 300)}`, "warning")
       }
