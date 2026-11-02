@@ -12,15 +12,31 @@
   },
   "scripts": {
     "test": "node --test",
-    "release:check": "npm test",
+    "lint": "eslint . --max-warnings 0",
+    "release:check": "npm run lint && npm test",
     "reinstall": "omp plugin install github:klondikemarlen/omp-trainer"
   },
-  "files": ["index.js", "lib/", "README.md", "CHANGELOG.md"],
+  "files": [
+    "index.js",
+    "lib/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "omp": {
-    "extensions": ["./index.js"]
+    "extensions": [
+      "./index.js"
+    ]
   },
-  "keywords": ["omp-plugin", "coaching"],
+  "keywords": [
+    "omp-plugin",
+    "coaching"
+  ],
   "dependencies": {
     "wrap-ansi": "^10.0.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0"
   }
 }
