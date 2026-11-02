@@ -3,6 +3,7 @@ import { promptHint } from "./lib/prompt-hint.js"
 import { recallPrompt, validateRecall } from "./lib/recall-prompt.js"
 import { renderHintCard } from "./lib/render-hint-card.js"
 import { readVerbosity, writeVerbosity } from "./lib/settings.js"
+import { shortcutCapabilities } from "./lib/shortcut-capabilities.js"
 
 // Status rows sort by key; keep the card after instance, project-time, and worktree statuses.
 const HINT_STATUS_PREFIX = "zz-omp-trainer.hint."
@@ -129,7 +130,10 @@ export function trainer(pi) {
 
   function showFeatureHint(request, ctx, occasion) {
     try {
-      const hint = promptHint(request, availableCapabilities(pi), readVerbosity(agentDir(ctx)), previousCapabilityId)
+      const capabilities = availableCapabilities(pi)
+      if (ctx.mode === "tui") capabilities.push(...shortcutCapabilities(pi))
+
+      const hint = promptHint(request, capabilities, readVerbosity(agentDir(ctx)), previousCapabilityId)
       if (!hint) {
         showHint(ctx, "Feature reminder: /trainer status shows whether hints are on and the shared global verbosity.")
         lastStatus = `Trainer control reminder shown ${occasion}`
